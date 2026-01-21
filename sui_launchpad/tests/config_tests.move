@@ -1,0 +1,565 @@
+/// Comprehensive tests for the config module
+#[test_only]
+module sui_launchpad::config_tests {
+    use sui::test_scenario::{Self, Scenario};
+
+    use sui_launchpad::config::{Self, LaunchpadConfig};
+    use sui_launchpad::access::{Self, AdminCap};
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // TEST ADDRESSES
+    // ═══════════════════════════════════════════════════════════════════════
+
+    fun admin(): address { @0xA1 }
+    fun treasury(): address { @0xE1 }
+    fun new_treasury(): address { @0xE2 }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SETUP HELPERS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    fun setup_config(scenario: &mut Scenario) {
+        scenario.next_tx(admin());
+        {
+            let ctx = scenario.ctx();
+
+            let admin_cap = access::create_admin_cap(ctx);
+            transfer::public_transfer(admin_cap, admin());
+
+            let config = config::create_config(treasury(), ctx);
+            transfer::public_share_object(config);
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // CONFIG CREATION TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_config_creation() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let config = scenario.take_shared<LaunchpadConfig>();
+
+            // Verify default values
+            assert!(config::creation_fee(&config) == 500_000_000, 0); // 0.5 SUI
+            assert!(config::trading_fee_bps(&config) == 50, 1); // 0.5%
+            assert!(config::graduation_fee_bps(&config) == 500, 2); // 5%
+            assert!(config::platform_allocation_bps(&config) == 100, 3); // 1%
+            assert!(config::treasury(&config) == treasury(), 4);
+            assert!(!config::is_paused(&config), 5);
+
+            // Verify graduation defaults
+            assert!(config::creator_graduation_bps(&config) == 0, 6); // 0% default
+            assert!(config::platform_graduation_bps(&config) == 250, 7); // 2.5%
+
+            // Verify LP distribution defaults
+            assert!(config::creator_lp_bps(&config) == 2000, 8); // 20%
+            assert!(config::community_lp_destination(&config) == 0, 9); // burn
+
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_config_default_curve_params() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let config = scenario.take_shared<LaunchpadConfig>();
+
+            // Verify curve defaults
+            assert!(config::default_base_price(&config) == 1_000, 0);
+            assert!(config::default_slope(&config) == 1_000_000, 1);
+            assert!(config::default_total_supply(&config) == 1_000_000_000_000_000_000, 2); // 1 billion with 9 decimals
+
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // FEE UPDATE TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_set_creation_fee() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            let new_fee = 1_000_000_000; // 1 SUI
+
+            config::set_creation_fee(&admin_cap, &mut config, new_fee);
+
+            assert!(config::creation_fee(&config) == new_fee, 0);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_trading_fee() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            let new_fee = 100; // 1%
+
+            config::set_trading_fee(&admin_cap, &mut config, new_fee);
+
+            assert!(config::trading_fee_bps(&config) == new_fee, 0);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 100)] // EFeeTooHigh
+    fun test_set_trading_fee_too_high() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Try to set fee above 10% (1000 bps)
+            config::set_trading_fee(&admin_cap, &mut config, 1001);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_graduation_fee() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            let new_fee = 300; // 3%
+
+            config::set_graduation_fee(&admin_cap, &mut config, new_fee);
+
+            assert!(config::graduation_fee_bps(&config) == new_fee, 0);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // GRADUATION ALLOCATION TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_set_creator_graduation_bps() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Set to 5% (max allowed)
+            config::set_creator_graduation_bps(&admin_cap, &mut config, 500);
+
+            assert!(config::creator_graduation_bps(&config) == 500, 0);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 104)] // EInvalidGraduationAllocation
+    fun test_set_creator_graduation_bps_too_high() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Try to set above 5% (500 bps)
+            config::set_creator_graduation_bps(&admin_cap, &mut config, 501);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_platform_graduation_bps() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Set to 5% (max allowed)
+            config::set_platform_graduation_bps(&admin_cap, &mut config, 500);
+
+            assert!(config::platform_graduation_bps(&config) == 500, 0);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 104)] // EInvalidGraduationAllocation
+    fun test_set_platform_graduation_bps_too_low() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Try to set below 2.5% (250 bps)
+            config::set_platform_graduation_bps(&admin_cap, &mut config, 249);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // LP DISTRIBUTION TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_set_creator_lp_bps() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Set to 30% (max allowed)
+            config::set_creator_lp_bps(&admin_cap, &mut config, 3000);
+
+            assert!(config::creator_lp_bps(&config) == 3000, 0);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 105)] // ECreatorLPTooHigh
+    fun test_set_creator_lp_bps_too_high() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Try to set above 30% (3000 bps)
+            config::set_creator_lp_bps(&admin_cap, &mut config, 3001);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_community_lp_destination() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Test all valid destinations
+            config::set_community_lp_destination(&admin_cap, &mut config, 0); // burn
+            assert!(config::community_lp_destination(&config) == 0, 0);
+
+            config::set_community_lp_destination(&admin_cap, &mut config, 1); // dao
+            assert!(config::community_lp_destination(&config) == 1, 1);
+
+            config::set_community_lp_destination(&admin_cap, &mut config, 2); // staking
+            assert!(config::community_lp_destination(&config) == 2, 2);
+
+            config::set_community_lp_destination(&admin_cap, &mut config, 3); // community vest
+            assert!(config::community_lp_destination(&config) == 3, 3);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 106)] // EInvalidLPDestination
+    fun test_set_community_lp_destination_invalid() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Try invalid destination (> 3)
+            config::set_community_lp_destination(&admin_cap, &mut config, 4);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // TREASURY TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_set_treasury() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            config::set_treasury(&admin_cap, &mut config, new_treasury());
+
+            assert!(config::treasury(&config) == new_treasury(), 0);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // PAUSE TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_toggle_pause() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            assert!(!config::is_paused(&config), 0);
+
+            config::toggle_pause(&admin_cap, &mut config);
+            assert!(config::is_paused(&config), 1);
+
+            config::toggle_pause(&admin_cap, &mut config);
+            assert!(!config::is_paused(&config), 2);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_paused() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            config::set_paused(&admin_cap, &mut config, true);
+            assert!(config::is_paused(&config), 0);
+
+            config::set_paused(&admin_cap, &mut config, false);
+            assert!(!config::is_paused(&config), 1);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // DEX CONFIG TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_dex_type_constants() {
+        assert!(config::dex_cetus() == 0, 0);
+        assert!(config::dex_turbos() == 1, 1);
+        assert!(config::dex_flowx() == 2, 2);
+        assert!(config::dex_suidex() == 3, 3);
+    }
+
+    #[test]
+    fun test_lp_destination_constants() {
+        assert!(config::lp_dest_burn() == 0, 0);
+        assert!(config::lp_dest_dao() == 1, 1);
+        assert!(config::lp_dest_staking() == 2, 2);
+        assert!(config::lp_dest_community_vest() == 3, 3);
+    }
+
+    #[test]
+    fun test_set_default_dex() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            config::set_default_dex(&admin_cap, &mut config, config::dex_turbos());
+            assert!(config::default_dex(&config) == config::dex_turbos(), 0);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // GRADUATION THRESHOLD TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_set_graduation_threshold() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            let new_threshold = 100_000_000_000_000; // 100,000 SUI
+
+            config::set_graduation_threshold(&admin_cap, &mut config, new_threshold);
+
+            assert!(config::graduation_threshold(&config) == new_threshold, 0);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 103)] // EInvalidThreshold
+    fun test_set_graduation_threshold_zero() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Try to set threshold to 0
+            config::set_graduation_threshold(&admin_cap, &mut config, 0);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // FUND SAFETY CONSTANT TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_fund_safety_constants() {
+        assert!(config::max_creator_lp_bps() == 3000, 0); // 30%
+        assert!(config::min_lp_lock_duration() == 7_776_000_000, 1); // 90 days in ms
+    }
+}
