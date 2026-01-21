@@ -562,4 +562,307 @@ module sui_launchpad::config_tests {
         assert!(config::max_creator_lp_bps() == 3000, 0); // 30%
         assert!(config::min_lp_lock_duration() == 7_776_000_000, 1); // 90 days in ms
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STRICT ADMIN SAFETY TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_config_values_preserved_across_updates() {
+        let mut scenario = test_scenario::begin(admin());
+
+        scenario.next_tx(admin());
+        {
+            let ctx = scenario.ctx();
+            let admin_cap = access::create_admin_cap(ctx);
+            transfer::public_transfer(admin_cap, admin());
+
+            let config = config::create_config(treasury(), ctx);
+            transfer::public_share_object(config);
+        };
+
+        // Record all initial values
+        scenario.next_tx(admin());
+        {
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+
+            let initial_creation_fee = config::creation_fee(&config);
+            let initial_trading_fee = config::trading_fee_bps(&config);
+            let initial_treasury = config::treasury(&config);
+            let initial_threshold = config::graduation_threshold(&config);
+
+            // Update ONE value
+            config::set_creation_fee(&admin_cap, &mut config, 1_000_000_000);
+
+            // STRICT: Only that value changed, others preserved
+            assert!(config::creation_fee(&config) == 1_000_000_000, 10000);
+            assert!(config::trading_fee_bps(&config) == initial_trading_fee, 10001);
+            assert!(config::treasury(&config) == initial_treasury, 10002);
+            assert!(config::graduation_threshold(&config) == initial_threshold, 10003);
+
+            // Update another value
+            config::set_trading_fee(&admin_cap, &mut config, 75);
+
+            // STRICT: Only that value changed
+            assert!(config::creation_fee(&config) == 1_000_000_000, 10004);
+            assert!(config::trading_fee_bps(&config) == 75, 10005);
+            assert!(config::treasury(&config) == initial_treasury, 10006);
+            assert!(config::graduation_threshold(&config) == initial_threshold, 10007);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_all_fee_limits_enforced() {
+        let mut scenario = test_scenario::begin(admin());
+
+        scenario.next_tx(admin());
+        {
+            let ctx = scenario.ctx();
+            let admin_cap = access::create_admin_cap(ctx);
+            transfer::public_transfer(admin_cap, admin());
+
+            let config = config::create_config(treasury(), ctx);
+            transfer::public_share_object(config);
+        };
+
+        scenario.next_tx(admin());
+        {
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+            let config = scenario.take_shared<LaunchpadConfig>();
+
+            // STRICT: Verify fee limits from constants
+            assert!(config::trading_fee_bps(&config) <= 500, 11000); // Max 5%
+            assert!(config::graduation_fee_bps(&config) <= 500, 11001); // Max 5%
+            assert!(config::creator_graduation_bps(&config) <= 500, 11002); // Max 5%
+            assert!(config::platform_graduation_bps(&config) >= 250, 11003); // Min 2.5%
+            assert!(config::platform_graduation_bps(&config) <= 500, 11004); // Max 5%
+
+            // Combined allocation must leave majority for liquidity
+            let creator_bps = config::creator_graduation_bps(&config);
+            let platform_bps = config::platform_graduation_bps(&config);
+            assert!(creator_bps + platform_bps <= 1000, 11005); // Max 10% combined
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_lp_distribution_safety_limits() {
+        let mut scenario = test_scenario::begin(admin());
+
+        scenario.next_tx(admin());
+        {
+            let ctx = scenario.ctx();
+            let admin_cap = access::create_admin_cap(ctx);
+            transfer::public_transfer(admin_cap, admin());
+
+            let config = config::create_config(treasury(), ctx);
+            transfer::public_share_object(config);
+        };
+
+        scenario.next_tx(admin());
+        {
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+            let config = scenario.take_shared<LaunchpadConfig>();
+
+            // STRICT: Creator LP is within safe limits
+            let creator_lp = config::creator_lp_bps(&config);
+            assert!(creator_lp <= config::max_creator_lp_bps(), 12000);
+            assert!(creator_lp <= 3000, 12001); // Hard cap 30%
+
+            // STRICT: Community gets the rest
+            let community_lp = 10000 - creator_lp;
+            assert!(community_lp >= 7000, 12002); // At least 70% to community
+
+            // STRICT: Vesting parameters are reasonable
+            let cliff = config::creator_lp_cliff_ms(&config);
+            let vesting = config::creator_lp_vesting_ms(&config);
+            assert!(cliff + vesting >= config::min_lp_lock_duration(), 12003);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_graduation_threshold_safety() {
+        let mut scenario = test_scenario::begin(admin());
+
+        scenario.next_tx(admin());
+        {
+            let ctx = scenario.ctx();
+            let admin_cap = access::create_admin_cap(ctx);
+            transfer::public_transfer(admin_cap, admin());
+
+            let config = config::create_config(treasury(), ctx);
+            transfer::public_share_object(config);
+        };
+
+        scenario.next_tx(admin());
+        {
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+            let config = scenario.take_shared<LaunchpadConfig>();
+
+            // STRICT: Graduation threshold is reasonable
+            let threshold = config::graduation_threshold(&config);
+            assert!(threshold > 0, 13000); // Must be positive
+
+            // STRICT: Min liquidity is reasonable
+            let min_liq = config::min_graduation_liquidity(&config);
+            assert!(min_liq > 0, 13001);
+
+            // STRICT: Threshold should be achievable but meaningful
+            // Default is 69,000 SUI (pump.fun style graduation)
+            assert!(threshold >= 1_000_000_000, 13002); // At least 1 SUI
+            assert!(threshold <= 100_000_000_000_000, 13003); // At most 100,000 SUI
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_pause_state_toggle_correctness() {
+        let mut scenario = test_scenario::begin(admin());
+
+        scenario.next_tx(admin());
+        {
+            let ctx = scenario.ctx();
+            let admin_cap = access::create_admin_cap(ctx);
+            transfer::public_transfer(admin_cap, admin());
+
+            let config = config::create_config(treasury(), ctx);
+            transfer::public_share_object(config);
+        };
+
+        scenario.next_tx(admin());
+        {
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+
+            // Initial state: not paused
+            assert!(!config::is_paused(&config), 14000);
+
+            // Pause
+            config::set_paused(&admin_cap, &mut config, true);
+            assert!(config::is_paused(&config), 14001);
+
+            // Pause again (idempotent)
+            config::set_paused(&admin_cap, &mut config, true);
+            assert!(config::is_paused(&config), 14002);
+
+            // Unpause
+            config::set_paused(&admin_cap, &mut config, false);
+            assert!(!config::is_paused(&config), 14003);
+
+            // Unpause again (idempotent)
+            config::set_paused(&admin_cap, &mut config, false);
+            assert!(!config::is_paused(&config), 14004);
+
+            // Toggle via toggle_pause
+            config::toggle_pause(&admin_cap, &mut config);
+            assert!(config::is_paused(&config), 14005);
+
+            config::toggle_pause(&admin_cap, &mut config);
+            assert!(!config::is_paused(&config), 14006);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_treasury_address_safety() {
+        let mut scenario = test_scenario::begin(admin());
+
+        scenario.next_tx(admin());
+        {
+            let ctx = scenario.ctx();
+            let admin_cap = access::create_admin_cap(ctx);
+            transfer::public_transfer(admin_cap, admin());
+
+            let config = config::create_config(treasury(), ctx);
+            transfer::public_share_object(config);
+        };
+
+        scenario.next_tx(admin());
+        {
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+
+            // Initial treasury
+            assert!(config::treasury(&config) == treasury(), 15000);
+
+            // Update treasury
+            let new_treasury = @0xF2;
+            config::set_treasury(&admin_cap, &mut config, new_treasury);
+
+            // STRICT: Treasury updated exactly
+            assert!(config::treasury(&config) == new_treasury, 15001);
+            assert!(config::treasury(&config) != treasury(), 15002);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_dex_configuration_safety() {
+        let mut scenario = test_scenario::begin(admin());
+
+        scenario.next_tx(admin());
+        {
+            let ctx = scenario.ctx();
+            let admin_cap = access::create_admin_cap(ctx);
+            transfer::public_transfer(admin_cap, admin());
+
+            let config = config::create_config(treasury(), ctx);
+            transfer::public_share_object(config);
+        };
+
+        scenario.next_tx(admin());
+        {
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+
+            // STRICT: DEX type must be valid (0-3)
+            let default_dex = config::default_dex(&config);
+            assert!(default_dex <= 3, 16000);
+
+            // Can set to any valid DEX
+            config::set_default_dex(&admin_cap, &mut config, config::dex_cetus());
+            assert!(config::default_dex(&config) == 0, 16001);
+
+            config::set_default_dex(&admin_cap, &mut config, config::dex_turbos());
+            assert!(config::default_dex(&config) == 1, 16002);
+
+            config::set_default_dex(&admin_cap, &mut config, config::dex_flowx());
+            assert!(config::default_dex(&config) == 2, 16003);
+
+            config::set_default_dex(&admin_cap, &mut config, config::dex_suidex());
+            assert!(config::default_dex(&config) == 3, 16004);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
 }
