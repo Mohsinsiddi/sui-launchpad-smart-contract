@@ -1902,4 +1902,702 @@ module sui_launchpad::bonding_curve_tests {
 
         scenario.end();
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // FUND SAFETY TESTS - Critical security tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_emergency_withdraw_sui_requires_pause() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(creator());
+        {
+            let (treasury_cap, metadata) = test_coin::create_test_coin(scenario.ctx());
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let creation_fee = config::creation_fee(&config);
+            let payment = mint_sui(creation_fee, &mut scenario);
+
+            let pool = bonding_curve::create_pool(
+                &config,
+                treasury_cap,
+                &metadata,
+                0,
+                payment,
+                &clock,
+                scenario.ctx(),
+            );
+
+            transfer::public_share_object(pool);
+            test_scenario::return_shared(config);
+            transfer::public_freeze_object(metadata);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Buy tokens to add SUI to pool
+        scenario.next_tx(buyer());
+        {
+            let mut pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let payment = mint_sui(5_000_000_000, &mut scenario);
+            let tokens = bonding_curve::buy(&mut pool, &config, payment, 0, &clock, scenario.ctx());
+
+            transfer::public_transfer(tokens, buyer());
+            test_scenario::return_shared(pool);
+            test_scenario::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Admin pauses, then withdraws - should work
+        scenario.next_tx(admin());
+        {
+            let mut pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+            let clock = create_clock(&mut scenario);
+
+            let sui_balance_before = bonding_curve::sui_balance(&pool);
+            assert!(sui_balance_before > 0, 10000); // Pool has SUI
+
+            // Pause first
+            bonding_curve::set_paused(&admin_cap, &mut pool, true, &clock);
+
+            // Emergency withdraw exact amount
+            let withdraw_amount = 1_000_000_000; // 1 SUI
+            let withdrawn = bonding_curve::emergency_withdraw_sui(
+                &admin_cap,
+                &mut pool,
+                withdraw_amount,
+                @0x0,
+                scenario.ctx(),
+            );
+
+            // STRICT: Withdrawn exact amount
+            assert!(coin::value(&withdrawn) == withdraw_amount, 10001);
+
+            // STRICT: Pool balance decreased by exact amount
+            assert!(bonding_curve::sui_balance(&pool) == sui_balance_before - withdraw_amount, 10002);
+
+            transfer::public_transfer(withdrawn, admin());
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(pool);
+            clock::destroy_for_testing(clock);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 300)] // EPoolPaused (pool must BE paused)
+    fun test_emergency_withdraw_sui_fails_without_pause() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(creator());
+        {
+            let (treasury_cap, metadata) = test_coin::create_test_coin(scenario.ctx());
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let creation_fee = config::creation_fee(&config);
+            let payment = mint_sui(creation_fee, &mut scenario);
+
+            let pool = bonding_curve::create_pool(
+                &config,
+                treasury_cap,
+                &metadata,
+                0,
+                payment,
+                &clock,
+                scenario.ctx(),
+            );
+
+            transfer::public_share_object(pool);
+            test_scenario::return_shared(config);
+            transfer::public_freeze_object(metadata);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Buy tokens to add SUI
+        scenario.next_tx(buyer());
+        {
+            let mut pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let payment = mint_sui(5_000_000_000, &mut scenario);
+            let tokens = bonding_curve::buy(&mut pool, &config, payment, 0, &clock, scenario.ctx());
+
+            transfer::public_transfer(tokens, buyer());
+            test_scenario::return_shared(pool);
+            test_scenario::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Try to withdraw WITHOUT pausing - should fail
+        scenario.next_tx(admin());
+        {
+            let mut pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Pool is NOT paused - this should fail
+            let _withdrawn = bonding_curve::emergency_withdraw_sui(
+                &admin_cap,
+                &mut pool,
+                1_000_000_000,
+                @0x0,
+                scenario.ctx(),
+            );
+
+            abort 999 // Won't reach
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_emergency_withdraw_tokens_requires_pause() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(creator());
+        {
+            let (treasury_cap, metadata) = test_coin::create_test_coin(scenario.ctx());
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let creation_fee = config::creation_fee(&config);
+            let payment = mint_sui(creation_fee, &mut scenario);
+
+            let pool = bonding_curve::create_pool(
+                &config,
+                treasury_cap,
+                &metadata,
+                0,
+                payment,
+                &clock,
+                scenario.ctx(),
+            );
+
+            transfer::public_share_object(pool);
+            test_scenario::return_shared(config);
+            transfer::public_freeze_object(metadata);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Admin pauses and withdraws tokens
+        scenario.next_tx(admin());
+        {
+            let mut pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+            let clock = create_clock(&mut scenario);
+
+            let token_balance_before = bonding_curve::token_balance(&pool);
+            assert!(token_balance_before > 0, 11000); // Pool has tokens
+
+            // Pause first
+            bonding_curve::set_paused(&admin_cap, &mut pool, true, &clock);
+
+            // Withdraw small amount
+            let withdraw_amount = 1_000_000_000; // 1 token
+            let withdrawn = bonding_curve::emergency_withdraw_tokens(
+                &admin_cap,
+                &mut pool,
+                withdraw_amount,
+                @0x0,
+                scenario.ctx(),
+            );
+
+            // STRICT: Withdrawn exact amount
+            assert!(coin::value(&withdrawn) == withdraw_amount, 11001);
+
+            // STRICT: Pool balance decreased by exact amount
+            assert!(bonding_curve::token_balance(&pool) == token_balance_before - withdraw_amount, 11002);
+
+            transfer::public_transfer(withdrawn, admin());
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(pool);
+            clock::destroy_for_testing(clock);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 300)] // EPoolPaused
+    fun test_emergency_withdraw_tokens_fails_without_pause() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(creator());
+        {
+            let (treasury_cap, metadata) = test_coin::create_test_coin(scenario.ctx());
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let creation_fee = config::creation_fee(&config);
+            let payment = mint_sui(creation_fee, &mut scenario);
+
+            let pool = bonding_curve::create_pool(
+                &config,
+                treasury_cap,
+                &metadata,
+                0,
+                payment,
+                &clock,
+                scenario.ctx(),
+            );
+
+            transfer::public_share_object(pool);
+            test_scenario::return_shared(config);
+            transfer::public_freeze_object(metadata);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Try to withdraw tokens WITHOUT pausing - should fail
+        scenario.next_tx(admin());
+        {
+            let mut pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Pool is NOT paused - this should fail
+            let _withdrawn = bonding_curve::emergency_withdraw_tokens(
+                &admin_cap,
+                &mut pool,
+                1_000_000_000,
+                @0x0,
+                scenario.ctx(),
+            );
+
+            abort 999 // Won't reach
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_sui_flow_buy_exact_destinations() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        // Create pool with 2% creator fee
+        scenario.next_tx(creator());
+        {
+            let (treasury_cap, metadata) = test_coin::create_test_coin(scenario.ctx());
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let creation_fee = config::creation_fee(&config);
+            let payment = mint_sui(creation_fee, &mut scenario);
+
+            let pool = bonding_curve::create_pool(
+                &config,
+                treasury_cap,
+                &metadata,
+                200, // 2% creator fee
+                payment,
+                &clock,
+                scenario.ctx(),
+            );
+
+            transfer::public_share_object(pool);
+            test_scenario::return_shared(config);
+            transfer::public_freeze_object(metadata);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Buy and verify SUI goes to correct destinations
+        scenario.next_tx(buyer());
+        {
+            let mut pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let sui_in = 10_000_000_000; // 10 SUI
+            let payment = mint_sui(sui_in, &mut scenario);
+
+            let pool_sui_before = bonding_curve::sui_balance(&pool);
+
+            let tokens = bonding_curve::buy(&mut pool, &config, payment, 0, &clock, scenario.ctx());
+
+            let pool_sui_after = bonding_curve::sui_balance(&pool);
+
+            // Calculate expected distribution
+            let platform_fee = (sui_in * 50) / 10000;  // 0.5% = 50,000,000
+            let creator_fee = (sui_in * 200) / 10000; // 2% = 200,000,000
+            let net_to_pool = sui_in - platform_fee - creator_fee; // 9.75 SUI
+
+            // STRICT: Pool received exactly net amount
+            assert!(pool_sui_after - pool_sui_before == net_to_pool, 12000);
+            assert!(net_to_pool == 9_750_000_000, 12001);
+
+            transfer::public_transfer(tokens, buyer());
+            test_scenario::return_shared(pool);
+            test_scenario::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Verify creator received their fee
+        scenario.next_tx(creator());
+        {
+            let creator_sui = scenario.take_from_sender<Coin<SUI>>();
+            // STRICT: Creator received exactly 2% = 200,000,000
+            assert!(coin::value(&creator_sui) == 200_000_000, 12002);
+            transfer::public_transfer(creator_sui, creator());
+        };
+
+        // Verify treasury received platform fee
+        scenario.next_tx(treasury());
+        {
+            let treasury_sui = scenario.take_from_sender<Coin<SUI>>();
+            // STRICT: Treasury received exactly 0.5% = 50,000,000
+            assert!(coin::value(&treasury_sui) == 50_000_000, 12003);
+            transfer::public_transfer(treasury_sui, treasury());
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_sui_flow_sell_exact_destinations() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        // Create pool with 1% creator fee
+        scenario.next_tx(creator());
+        {
+            let (treasury_cap, metadata) = test_coin::create_test_coin(scenario.ctx());
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let creation_fee = config::creation_fee(&config);
+            let payment = mint_sui(creation_fee, &mut scenario);
+
+            let pool = bonding_curve::create_pool(
+                &config,
+                treasury_cap,
+                &metadata,
+                100, // 1% creator fee
+                payment,
+                &clock,
+                scenario.ctx(),
+            );
+
+            transfer::public_share_object(pool);
+            test_scenario::return_shared(config);
+            transfer::public_freeze_object(metadata);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Buy tokens first
+        scenario.next_tx(buyer());
+        {
+            let mut pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let payment = mint_sui(10_000_000_000, &mut scenario);
+            let tokens = bonding_curve::buy(&mut pool, &config, payment, 0, &clock, scenario.ctx());
+
+            transfer::public_transfer(tokens, buyer());
+            test_scenario::return_shared(pool);
+            test_scenario::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Sell and verify SUI flow
+        scenario.next_tx(buyer());
+        {
+            let mut pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let mut tokens = scenario.take_from_sender<Coin<TEST_COIN>>();
+            let tokens_to_sell = coin::value(&tokens) / 4; // Sell 25%
+            let sell_tokens = coin::split(&mut tokens, tokens_to_sell, scenario.ctx());
+
+            let pool_sui_before = bonding_curve::sui_balance(&pool);
+
+            let sui_received = bonding_curve::sell(&mut pool, &config, sell_tokens, 0, &clock, scenario.ctx());
+
+            let pool_sui_after = bonding_curve::sui_balance(&pool);
+
+            // Gross SUI extracted from pool
+            let gross_sui_out = pool_sui_before - pool_sui_after;
+
+            // Fees taken from gross
+            let platform_fee = (gross_sui_out * 50) / 10000;  // 0.5%
+            let creator_fee = (gross_sui_out * 100) / 10000;  // 1%
+            let expected_net = gross_sui_out - platform_fee - creator_fee;
+
+            // STRICT: Buyer received exactly net amount
+            assert!(coin::value(&sui_received) == expected_net, 13000);
+
+            transfer::public_transfer(sui_received, buyer());
+            transfer::public_transfer(tokens, buyer());
+            test_scenario::return_shared(pool);
+            test_scenario::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_token_flow_buy_exact_amounts() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(creator());
+        {
+            let (treasury_cap, metadata) = test_coin::create_test_coin(scenario.ctx());
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let creation_fee = config::creation_fee(&config);
+            let payment = mint_sui(creation_fee, &mut scenario);
+
+            let pool = bonding_curve::create_pool(
+                &config,
+                treasury_cap,
+                &metadata,
+                0,
+                payment,
+                &clock,
+                scenario.ctx(),
+            );
+
+            transfer::public_share_object(pool);
+            test_scenario::return_shared(config);
+            transfer::public_freeze_object(metadata);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Buy and verify token flow
+        scenario.next_tx(buyer());
+        {
+            let mut pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let pool_tokens_before = bonding_curve::token_balance(&pool);
+            let circulating_before = bonding_curve::circulating_supply(&pool);
+
+            let payment = mint_sui(1_000_000_000, &mut scenario);
+            let tokens = bonding_curve::buy(&mut pool, &config, payment, 0, &clock, scenario.ctx());
+
+            let tokens_bought = coin::value(&tokens);
+            let pool_tokens_after = bonding_curve::token_balance(&pool);
+            let circulating_after = bonding_curve::circulating_supply(&pool);
+
+            // STRICT: Tokens came from pool
+            assert!(pool_tokens_before - pool_tokens_after == tokens_bought, 14000);
+
+            // STRICT: Circulating increased by exact amount
+            assert!(circulating_after - circulating_before == tokens_bought, 14001);
+
+            // STRICT: Total tokens in system unchanged (conservation)
+            let total_supply = bonding_curve::total_supply(&pool);
+            let platform_allocation = total_supply / 100; // 1%
+            assert!(pool_tokens_after + circulating_after == total_supply - platform_allocation, 14002);
+
+            transfer::public_transfer(tokens, buyer());
+            test_scenario::return_shared(pool);
+            test_scenario::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_token_flow_sell_returns_to_pool() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(creator());
+        {
+            let (treasury_cap, metadata) = test_coin::create_test_coin(scenario.ctx());
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let creation_fee = config::creation_fee(&config);
+            let payment = mint_sui(creation_fee, &mut scenario);
+
+            let pool = bonding_curve::create_pool(
+                &config,
+                treasury_cap,
+                &metadata,
+                0,
+                payment,
+                &clock,
+                scenario.ctx(),
+            );
+
+            transfer::public_share_object(pool);
+            test_scenario::return_shared(config);
+            transfer::public_freeze_object(metadata);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Buy first
+        scenario.next_tx(buyer());
+        {
+            let mut pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let payment = mint_sui(5_000_000_000, &mut scenario);
+            let tokens = bonding_curve::buy(&mut pool, &config, payment, 0, &clock, scenario.ctx());
+
+            transfer::public_transfer(tokens, buyer());
+            test_scenario::return_shared(pool);
+            test_scenario::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Sell and verify tokens return to pool
+        scenario.next_tx(buyer());
+        {
+            let mut pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let pool_tokens_before = bonding_curve::token_balance(&pool);
+            let circulating_before = bonding_curve::circulating_supply(&pool);
+
+            let mut tokens = scenario.take_from_sender<Coin<TEST_COIN>>();
+            let tokens_to_sell = coin::value(&tokens) / 2;
+            let sell_tokens = coin::split(&mut tokens, tokens_to_sell, scenario.ctx());
+
+            let sui_received = bonding_curve::sell(&mut pool, &config, sell_tokens, 0, &clock, scenario.ctx());
+
+            let pool_tokens_after = bonding_curve::token_balance(&pool);
+            let circulating_after = bonding_curve::circulating_supply(&pool);
+
+            // STRICT: Tokens returned to pool
+            assert!(pool_tokens_after - pool_tokens_before == tokens_to_sell, 15000);
+
+            // STRICT: Circulating decreased by exact amount sold
+            assert!(circulating_before - circulating_after == tokens_to_sell, 15001);
+
+            // STRICT: Conservation still holds
+            let total_supply = bonding_curve::total_supply(&pool);
+            let platform_allocation = total_supply / 100;
+            assert!(pool_tokens_after + circulating_after == total_supply - platform_allocation, 15002);
+
+            transfer::public_transfer(sui_received, buyer());
+            transfer::public_transfer(tokens, buyer());
+            test_scenario::return_shared(pool);
+            test_scenario::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_no_fund_leakage_full_cycle() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(creator());
+        {
+            let (treasury_cap, metadata) = test_coin::create_test_coin(scenario.ctx());
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let creation_fee = config::creation_fee(&config);
+            let payment = mint_sui(creation_fee, &mut scenario);
+
+            let pool = bonding_curve::create_pool(
+                &config,
+                treasury_cap,
+                &metadata,
+                0, // No creator fee for simplicity
+                payment,
+                &clock,
+                scenario.ctx(),
+            );
+
+            transfer::public_share_object(pool);
+            test_scenario::return_shared(config);
+            transfer::public_freeze_object(metadata);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Track initial state
+        scenario.next_tx(buyer());
+        {
+            let pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+
+            let initial_pool_sui = bonding_curve::sui_balance(&pool);
+            let initial_pool_tokens = bonding_curve::token_balance(&pool);
+            let initial_circulating = bonding_curve::circulating_supply(&pool);
+
+            // STRICT: Initial state
+            assert!(initial_pool_sui == 0, 16000);
+            assert!(initial_circulating == 0, 16001);
+            assert!(initial_pool_tokens > 0, 16002);
+
+            test_scenario::return_shared(pool);
+        };
+
+        // Buy tokens
+        scenario.next_tx(buyer());
+        {
+            let mut pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let payment = mint_sui(1_000_000_000, &mut scenario);
+            let tokens = bonding_curve::buy(&mut pool, &config, payment, 0, &clock, scenario.ctx());
+
+            transfer::public_transfer(tokens, buyer());
+            test_scenario::return_shared(pool);
+            test_scenario::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Sell ALL tokens back
+        scenario.next_tx(buyer());
+        {
+            let mut pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let tokens = scenario.take_from_sender<Coin<TEST_COIN>>();
+            let tokens_held = coin::value(&tokens);
+
+            let sui_received = bonding_curve::sell(&mut pool, &config, tokens, 0, &clock, scenario.ctx());
+
+            // After selling all, circulating should be 0
+            assert!(bonding_curve::circulating_supply(&pool) == 0, 16003);
+
+            // Pool should have minimal dust (due to fees taken on buy, pool has less SUI)
+            // This is expected behavior - not a leak
+            let pool_sui_remaining = bonding_curve::sui_balance(&pool);
+            assert!(pool_sui_remaining < 1_000_000, 16004); // Less than 0.001 SUI dust
+
+            transfer::public_transfer(sui_received, buyer());
+            test_scenario::return_shared(pool);
+            test_scenario::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        scenario.end();
+    }
 }
