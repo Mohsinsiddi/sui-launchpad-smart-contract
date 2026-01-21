@@ -4,20 +4,20 @@
 
 This document tracks the development progress of all products in the DeFi suite.
 
-**Last Updated:** 2026-01-21
+**Last Updated:** 2026-01-22
 
 ---
 
 ## Product Summary
 
-| Product | Status | Progress | Est. LOC | Actual LOC |
-|---------|--------|----------|----------|------------|
-| **Launchpad** | In Progress | 95% | ~1,800 | ~2,200 |
-| **Vesting** | Not Started | 0% | ~760 | 0 |
-| **Staking** | Not Started | 0% | ~940 | 0 |
-| **DAO** | Not Started | 0% | ~1,510 | 0 |
-| **Multisig** | Not Started | 0% | ~820 | 0 |
-| **Total** | - | 20% | ~5,830 | ~1,900 |
+| Product | Status | Progress | Est. LOC | Actual LOC | Tests |
+|---------|--------|----------|----------|------------|-------|
+| **Launchpad** | DONE | 100% | ~1,800 | ~2,200 | 138 |
+| **Vesting** | DONE | 95% | ~760 | ~1,100 | 51 |
+| **Staking** | Not Started | 0% | ~940 | 0 | 0 |
+| **DAO** | Not Started | 0% | ~1,510 | 0 | 0 |
+| **Multisig** | Not Started | 0% | ~820 | 0 | 0 |
+| **Total** | - | 40% | ~5,830 | ~3,300 | 189 |
 
 > **Note:** Vesting has been extracted as a standalone package (`sui_vesting`) for reusability.
 > The launchpad contains a placeholder that will integrate with sui_vesting when ready.
@@ -33,12 +33,13 @@ This document tracks the development progress of all products in the DeFi suite.
 
 PHASE 1: LAUNCHPAD (Primary Product)
 ════════════════════════════════════
-[███████████████████░] 95%
+[████████████████████] 100% DONE - 138 tests
 
 PHASE 2: VESTING (Standalone Service)
 ═════════════════════════════════════
-[░░░░░░░░░░░░░░░░░░░░] 0%
+[███████████████████░] 95% DONE - 51 tests
 → Separate package: sui_vesting
+→ Coin<T> vesting + NFT vesting (CLMM positions)
 → Integrates with Launchpad, Staking, DAO
 
 PHASE 3: STAKING
@@ -72,7 +73,7 @@ PHASE 8: MAINNET LAUNCH
 
 ### 1. Launchpad (sui_launchpad)
 
-**Overall Progress:** 95%
+**Overall Progress:** 100% - 138 tests passing
 
 | Module | File | Status | Lines | Notes |
 |--------|------|--------|-------|-------|
@@ -124,19 +125,21 @@ PHASE 8: MAINNET LAUNCH
 
 ### 2. Vesting (sui_vesting) - STANDALONE PACKAGE
 
-**Overall Progress:** 0%
+**Overall Progress:** 95% - 51 tests passing
 
 | Module | File | Status | Lines | Notes |
 |--------|------|--------|-------|-------|
 | **Core** | | | | |
-| └ Vesting | `vesting.move` | Not Started | ~250 | Core VestingSchedule |
-| └ Linear | `linear.move` | Not Started | ~100 | Linear calculations |
-| └ Milestone | `milestone.move` | Not Started | ~150 | Future: milestone-based |
-| **Utilities** | | | | |
-| └ Batch | `batch.move` | Not Started | ~80 | Batch operations |
-| └ Admin | `admin.move` | Not Started | ~100 | Admin functions |
-| **Events** | `events.move` | Not Started | ~80 | Event definitions |
-| **Tests** | `tests/` | Not Started | - | Unit & integration tests |
+| └ Access | `core/access.move` | DONE | ~75 | AdminCap, CreatorCap |
+| └ Errors | `core/errors.move` | DONE | ~50 | Error codes |
+| └ Vesting | `vesting.move` | DONE | ~570 | Coin<T> vesting schedules |
+| └ NFT Vesting | `nft_vesting.move` | DONE | ~440 | NFT/Position vesting |
+| **Events** | `events.move` | DONE | ~180 | All event definitions |
+| **Tests** | | | | |
+| └ test_coin | `tests/test_coin.move` | DONE | ~45 | Test coin helper |
+| └ test_nft | `tests/test_nft.move` | DONE | ~65 | Test NFT helper |
+| └ Vesting Tests | `tests/vesting_tests.move` | DONE | ~1350 | 32 tests |
+| └ NFT Tests | `tests/nft_vesting_tests.move` | DONE | ~1000 | 19 tests |
 
 **Blockers:** None
 
@@ -145,11 +148,21 @@ PHASE 8: MAINNET LAUNCH
 - Can be sold as separate B2B service
 - Independent versioning and audits
 
+**Completed:**
+- [x] Set up Move project structure
+- [x] Implement vesting.move for Coin<T> (linear + cliff)
+- [x] Implement nft_vesting.move for NFTs (CLMM positions)
+- [x] Implement events.move
+- [x] Implement access.move (capabilities)
+- [x] Write comprehensive coin vesting tests (32 tests)
+- [x] Write comprehensive NFT vesting tests (19 tests)
+- [x] Documentation (VESTING.md, VESTING_TESTS.md)
+
 **Next Steps:**
-1. [ ] Set up Move project structure
-2. [ ] Implement core vesting.move
-3. [ ] Implement linear.move
-4. [ ] Integrate with Launchpad graduation
+1. [ ] Integrate with Launchpad graduation
+2. [ ] Add batch operations (future)
+3. [ ] Testnet deployment
+4. [ ] Audit
 
 **Specification:** See [VESTING.md](./VESTING.md)
 
@@ -250,7 +263,8 @@ PHASE 8: MAINNET LAUNCH
 
 | Product | Unit Tests | Integration Tests | Testnet Deploy |
 |---------|------------|-------------------|----------------|
-| Launchpad | 6 Passing | Not Started | Not Started |
+| Launchpad | 138 Passing | Not Started | Not Started |
+| Vesting | 51 Passing | Not Started | Not Started |
 | Staking | Not Started | Not Started | Not Started |
 | DAO | Not Started | Not Started | Not Started |
 | Multisig | Not Started | Not Started | Not Started |
@@ -291,6 +305,20 @@ PHASE 8: MAINNET LAUNCH
 ---
 
 ## Changelog
+
+### 2026-01-22
+- Implemented sui_vesting package (95% complete):
+  - vesting.move - Coin<T> linear + cliff vesting
+  - nft_vesting.move - NFT/Position vesting (Cetus, Turbos CLMM support)
+  - events.move - All vesting events
+  - core/access.move - AdminCap, CreatorCap capabilities
+- Comprehensive test coverage (51 tests):
+  - 32 coin vesting tests (creation, claiming, revocation, admin, edge cases)
+  - 19 NFT vesting tests (creation, claiming, revocation, admin, edge cases)
+- Created documentation:
+  - Updated VESTING.md with implementation details
+  - Created sui_vesting/docs/VESTING_TESTS.md
+- Updated STATUS.md with progress
 
 ### 2026-01-21 (Night)
 - Implemented Fund Safety features (95% complete):
