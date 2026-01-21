@@ -1,0 +1,14 @@
+[package]
+name = "sui_launchpad"
+version = "1.0.0"
+edition = "2024"
+
+# Sui framework is auto-resolved in Sui CLI 1.63+
+[dependencies]
+
+[addresses]
+sui_launchpad = "0x0"
+
+[dev-dependencies]
+
+[dev-addresses]

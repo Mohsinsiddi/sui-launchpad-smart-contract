@@ -17,12 +17,25 @@ launchpad/
 │       ├── registry.move
 │       ├── bonding_curve.move
 │       ├── graduation.move
-│       ├── vesting.move
+│       ├── vesting.move               # PLACEHOLDER → see sui-vesting
+│       ├── launchpad.move
 │       ├── dex_adapters/
 │       │   ├── cetus.move
 │       │   ├── turbos.move
-│       │   └── flowx.move
+│       │   ├── flowx.move
+│       │   └── suidex.move
 │       └── events.move
+│
+├── sui-vesting/                         # STANDALONE: Vesting Service
+│   ├── Move.toml
+│   ├── Move.lock
+│   └── sources/
+│       ├── vesting.move               # Core vesting logic
+│       ├── linear.move                # Linear vesting
+│       ├── milestone.move             # Milestone-based (future)
+│       ├── batch.move                 # Batch operations
+│       ├── admin.move                 # Admin functions
+│       └── events.move                # Event definitions
 │
 ├── sui-staking/                         # PRODUCT 2: Staking Service
 │   ├── Move.toml
@@ -79,6 +92,7 @@ launchpad/
 ├── docs/                                # Documentation
 │   ├── ARCHITECTURE.md                  # Master architecture
 │   ├── LAUNCHPAD.md                     # Launchpad specification
+│   ├── VESTING.md                       # Vesting specification (standalone)
 │   ├── STAKING.md                       # Staking specification
 │   ├── DAO.md                           # DAO specification
 │   ├── MULTISIG.md                      # Multisig specification
@@ -270,11 +284,15 @@ TREASURY_ADDRESS=
 
 | Product | Directories | Files | Est. Lines |
 |---------|-------------|-------|------------|
-| sui-launchpad | 3 | 12 | ~1,980 |
+| sui-launchpad | 3 | 14 | ~3,313 |
+| sui-vesting | 1 | 6 | ~760 |
 | sui-staking | 2 | 7 | ~940 |
 | sui-dao | 2 | 9 | ~1,510 |
 | sui-multisig | 2 | 5 | ~820 |
 | token-template | 1 | 1 | ~50 |
 | scripts | 1 | 6 | ~300 |
-| docs | 1 | 7 | ~2,500 |
-| **Total** | **12** | **47** | **~8,100** |
+| docs | 1 | 9 | ~3,000 |
+| **Total** | **13** | **57** | **~10,693** |
+
+> **Note:** sui-vesting is a standalone package for reusability across products.
+> Launchpad contains a placeholder (`vesting.move`) that will integrate with sui-vesting.

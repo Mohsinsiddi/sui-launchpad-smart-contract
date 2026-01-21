@@ -22,14 +22,18 @@ sui-launchpad/
     ├── registry.move               # Token registry
     ├── bonding_curve.move          # Trading pool & curve logic
     ├── graduation.move             # DEX migration logic
-    ├── vesting.move                # LP token vesting
+    ├── vesting.move                # PLACEHOLDER → see sui_vesting
     │
     ├── dex_adapters/               # DEX integrations
     │   ├── cetus.move
     │   ├── turbos.move
-    │   └── flowx.move
+    │   ├── flowx.move
+    │   └── suidex.move
     │
     └── events.move                 # All events
+
+NOTE: Vesting is a standalone package (sui_vesting) for reusability.
+      See VESTING.md for full specification.
 ```
 
 ---
@@ -386,53 +390,55 @@ STEP 6: EMIT EVENTS
 
 ---
 
-## LP Vesting (Built-in)
+## LP Vesting (Standalone Package)
+
+> **IMPORTANT:** Vesting is now a standalone package (`sui_vesting`) for reusability.
+> See [VESTING.md](./VESTING.md) for complete specification.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                    LP VESTING (Post-Graduation)                          │
+│                    → Provided by sui_vesting package                     │
 └─────────────────────────────────────────────────────────────────────────┘
 
-If creator chooses vesting option:
+INTEGRATION FLOW:
+─────────────────
 
+At Graduation:
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                                                                         │
-│   VestingSchedule                                                       │
-│   ═══════════════                                                       │
+│  1. graduation.move calculates token allocations                        │
+│     ├── Creator tokens: 0-5% (configurable)                            │
+│     ├── Platform tokens: 2.5-5% (configurable)                         │
+│     └── DEX liquidity: remaining tokens                                │
 │                                                                         │
-│   beneficiary: creator_address                                          │
-│   lp_tokens: LP<SUI-TOKEN>                                             │
-│   total_amount: X LP tokens                                             │
-│   start_time: graduation_timestamp                                      │
-│   cliff_duration: 30 days (optional)                                    │
-│   vesting_duration: 365 days                                            │
-│   claimed: 0                                                            │
+│  2. For creator tokens, call sui_vesting:                              │
 │                                                                         │
-│   Timeline:                                                             │
-│   ─────────────────────────────────────────────────────────────────    │
-│   │ Graduation │ Cliff End │                            │ Vest End │   │
-│   │     ▼      │     ▼     │                            │     ▼    │   │
-│   ├────────────┼───────────┼────────────────────────────┼──────────┤   │
-│   │  Day 0     │  Day 30   │  Linear vesting...        │  Day 365 │   │
-│   │  0% claim  │  ~8% can  │                            │  100%    │   │
-│   │            │  claim    │                            │  claimed │   │
-│   └────────────┴───────────┴────────────────────────────┴──────────┘   │
+│     let schedule = sui_vesting::create_vesting_now(                    │
+│         pool_id,                                                       │
+│         creator_address,                                               │
+│         creator_tokens,                                                │
+│         6_months,        // cliff                                      │
+│         12_months,       // vesting                                    │
+│         true,            // revocable                                  │
+│         clock,                                                         │
+│         ctx,                                                           │
+│     );                                                                 │
+│                                                                         │
+│  3. Transfer VestingSchedule to creator                                │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 
-Claim function:
-═══════════════
-public fun claim_vested_lp(
-    schedule: &mut VestingSchedule,
-    clock: &Clock,
-    ctx: &mut TxContext
-): Coin<LP> {
-    // Verify caller is beneficiary
-    // Calculate unlocked amount based on time
-    // Transfer unlocked LP tokens
-    // Update claimed amount
-}
+CURRENT STATUS: Placeholder in launchpad, awaiting sui_vesting deployment
 ```
+
+For complete vesting documentation including:
+- Linear vesting with cliff
+- Milestone-based vesting
+- Batch operations
+- Admin functions
+
+**See: [VESTING.md](./VESTING.md)**
 
 ---
 
@@ -658,19 +664,24 @@ struct LaunchpadConfig has key {
 
 | File | Lines | Description |
 |------|-------|-------------|
-| core/math.move | ~100 | Safe math, curve calculations |
-| core/access.move | ~80 | AdminCap, guards |
-| core/errors.move | ~50 | Error constants |
-| config.move | ~150 | Platform configuration |
-| registry.move | ~200 | Token registration |
-| bonding_curve.move | ~400 | Pool, buy, sell |
-| graduation.move | ~250 | DEX migration |
-| vesting.move | ~150 | LP vesting |
-| dex_adapters/cetus.move | ~200 | Cetus integration |
-| dex_adapters/turbos.move | ~150 | Turbos integration |
-| dex_adapters/flowx.move | ~150 | FlowX integration |
-| events.move | ~100 | Event definitions |
-| **Total** | **~1,980** | |
+| core/math.move | ~200 | Safe math, curve calculations |
+| core/access.move | ~215 | AdminCap, OperatorCap, TreasuryCap |
+| core/errors.move | ~195 | Error constants |
+| config.move | ~408 | Platform configuration |
+| registry.move | ~251 | Token registration |
+| bonding_curve.move | ~577 | Pool, buy, sell |
+| graduation.move | ~353 | DEX migration |
+| vesting.move | ~109 | **PLACEHOLDER** (see sui_vesting) |
+| launchpad.move | ~405 | Entry points |
+| dex_adapters/cetus.move | ~101 | Cetus integration |
+| dex_adapters/turbos.move | ~84 | Turbos integration |
+| dex_adapters/flowx.move | ~84 | FlowX integration |
+| dex_adapters/suidex.move | ~84 | SuiDex integration |
+| events.move | ~247 | Event definitions |
+| **Total** | **~3,313** | |
+
+> **Note:** Vesting functionality (~760 lines) moved to standalone `sui_vesting` package.
+> See [VESTING.md](./VESTING.md) for specifications.
 
 ---
 
@@ -678,15 +689,24 @@ struct LaunchpadConfig has key {
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Core utilities | Not started | |
-| Config | Not started | |
-| Registry | Not started | |
-| Bonding curve | Not started | |
-| Graduation | Not started | |
-| LP Vesting | Not started | |
-| Cetus adapter | Not started | |
-| Turbos adapter | Not started | |
-| FlowX adapter | Not started | |
-| Events | Not started | |
-| Tests | Not started | |
-| Audit | Not started | |
+| Core utilities | DONE | math, access, errors |
+| Config | DONE | With graduation allocations |
+| Registry | DONE | Token registration |
+| Bonding curve | DONE | Pool, buy, sell |
+| Graduation | DONE | DEX migration + token allocations |
+| Vesting | PLACEHOLDER | Moved to sui_vesting |
+| Cetus adapter | DONE | Placeholder implementation |
+| Turbos adapter | DONE | Placeholder implementation |
+| FlowX adapter | DONE | Placeholder implementation |
+| SuiDex adapter | DONE | Placeholder implementation |
+| Events | DONE | All events defined |
+| Tests | In Progress | Unit tests |
+| Audit | Not Started | |
+
+**Overall Progress: 85%**
+
+**Next Steps:**
+1. Complete unit tests
+2. Deploy to testnet
+3. Integrate sui_vesting when ready
+4. Implement actual DEX SDK calls

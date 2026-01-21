@@ -1,0 +1,33 @@
+# Build artifacts
+build/*
+traces/*
+.trace
+.coverage*
+Pub.*.toml
+
+# Lock file (comment out if you want to commit it)
+Move.lock
+
+# Environment files
+.env
+.env.*
+*.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Deployment
+deployment_*.json
+*_package_id.txt
+publish_output.json
+
+# Logs
+*.log
+
+# Temp
+tmp/
+*.tmp

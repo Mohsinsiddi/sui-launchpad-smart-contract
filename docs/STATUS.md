@@ -12,11 +12,15 @@ This document tracks the development progress of all products in the DeFi suite.
 
 | Product | Status | Progress | Est. LOC | Actual LOC |
 |---------|--------|----------|----------|------------|
-| **Launchpad** | Not Started | 0% | ~1,980 | 0 |
+| **Launchpad** | In Progress | 95% | ~1,800 | ~2,200 |
+| **Vesting** | Not Started | 0% | ~760 | 0 |
 | **Staking** | Not Started | 0% | ~940 | 0 |
 | **DAO** | Not Started | 0% | ~1,510 | 0 |
 | **Multisig** | Not Started | 0% | ~820 | 0 |
-| **Total** | - | 0% | ~5,250 | 0 |
+| **Total** | - | 20% | ~5,830 | ~1,900 |
+
+> **Note:** Vesting has been extracted as a standalone package (`sui_vesting`) for reusability.
+> The launchpad contains a placeholder that will integrate with sui_vesting when ready.
 
 ---
 
@@ -29,29 +33,35 @@ This document tracks the development progress of all products in the DeFi suite.
 
 PHASE 1: LAUNCHPAD (Primary Product)
 ════════════════════════════════════
-[░░░░░░░░░░░░░░░░░░░░] 0%
+[███████████████████░] 95%
 
-PHASE 2: STAKING
+PHASE 2: VESTING (Standalone Service)
+═════════════════════════════════════
+[░░░░░░░░░░░░░░░░░░░░] 0%
+→ Separate package: sui_vesting
+→ Integrates with Launchpad, Staking, DAO
+
+PHASE 3: STAKING
 ════════════════
 [░░░░░░░░░░░░░░░░░░░░] 0%
 
-PHASE 3: DAO
+PHASE 4: DAO
 ════════════
 [░░░░░░░░░░░░░░░░░░░░] 0%
 
-PHASE 4: MULTISIG
+PHASE 5: MULTISIG
 ═════════════════
 [░░░░░░░░░░░░░░░░░░░░] 0%
 
-PHASE 5: INTEGRATION & TESTING
+PHASE 6: INTEGRATION & TESTING
 ══════════════════════════════
 [░░░░░░░░░░░░░░░░░░░░] 0%
 
-PHASE 6: AUDIT
+PHASE 7: AUDIT
 ══════════════
 [░░░░░░░░░░░░░░░░░░░░] 0%
 
-PHASE 7: MAINNET LAUNCH
+PHASE 8: MAINNET LAUNCH
 ═══════════════════════
 [░░░░░░░░░░░░░░░░░░░░] 0%
 ```
@@ -60,41 +70,92 @@ PHASE 7: MAINNET LAUNCH
 
 ## Detailed Status
 
-### 1. Launchpad (sui-launchpad)
+### 1. Launchpad (sui_launchpad)
+
+**Overall Progress:** 95%
+
+| Module | File | Status | Lines | Notes |
+|--------|------|--------|-------|-------|
+| **Core** | | | | |
+| └ Math | `core/math.move` | DONE | ~200 | u256-based, bonding curve calcs |
+| └ Access | `core/access.move` | DONE | ~210 | AdminCap, OperatorCap, TreasuryCap |
+| └ Errors | `core/errors.move` | DONE | ~271 | All error codes (incl. fund safety) |
+| **Main** | | | | |
+| └ Config | `config.move` | DONE | ~541 | Platform config + LP distribution |
+| └ Events | `events.move` | DONE | ~247 | All event definitions |
+| └ Bonding Curve | `bonding_curve.move` | DONE | ~580 | Pool, buy, sell, treasury freeze |
+| └ Registry | `registry.move` | DONE | ~251 | Token registration |
+| └ Graduation | `graduation.move` | DONE | ~623 | DEX migration + LP distribution |
+| └ Vesting | `vesting.move` | PLACEHOLDER | ~109 | **Moved to sui_vesting** |
+| └ Launchpad | `launchpad.move` | DONE | ~405 | Entry points & init |
+| **DEX Adapters** | | | | |
+| └ Cetus | `dex_adapters/cetus.move` | DONE | ~119 | Cetus CLMM + LP distribution |
+| └ Turbos | `dex_adapters/turbos.move` | DONE | ~102 | Turbos + LP distribution |
+| └ FlowX | `dex_adapters/flowx.move` | DONE | ~102 | FlowX + LP distribution |
+| └ SuiDex | `dex_adapters/suidex.move` | DONE | ~102 | SuiDex + LP distribution |
+| **Tests** | `tests/` | In Progress | - | Unit tests |
+
+> **Vesting Note:** Vesting functionality moved to standalone `sui_vesting` package.
+> Current `vesting.move` is a placeholder with integration documentation.
+
+**Blockers:** None
+
+**Completed:**
+- [x] Project structure with Sui CLI (edition 2024)
+- [x] core/errors.move - All error codes
+- [x] core/math.move - u256-based math, bonding curve
+- [x] core/access.move - Capabilities system
+- [x] config.move - Platform configuration (with SuiDex support)
+- [x] events.move - All events
+- [x] bonding_curve.move - Pool, buy, sell with reentrancy protection
+- [x] registry.move - Token registration and lookup
+- [x] graduation.move - DEX migration flow with token allocations
+- [x] vesting.move - Placeholder (moved to sui_vesting)
+- [x] launchpad.move - Main entry points and init
+- [x] DEX adapters (Cetus, Turbos, FlowX, SuiDex)
+
+**Next Steps:**
+1. [ ] Add more comprehensive unit tests
+2. [ ] Add integration tests
+3. [ ] Deploy to testnet
+4. [ ] Integrate sui_vesting when ready
+
+---
+
+### 2. Vesting (sui_vesting) - STANDALONE PACKAGE
 
 **Overall Progress:** 0%
 
 | Module | File | Status | Lines | Notes |
 |--------|------|--------|-------|-------|
 | **Core** | | | | |
-| └ Math | `core/math.move` | Not Started | ~100 | Safe math, curve calculations |
-| └ Access | `core/access.move` | Not Started | ~80 | AdminCap, guards |
-| └ Errors | `core/errors.move` | Not Started | ~50 | Error constants |
-| **Main** | | | | |
-| └ Config | `config.move` | Not Started | ~150 | Platform configuration |
-| └ Registry | `registry.move` | Not Started | ~200 | Token registration |
-| └ Bonding Curve | `bonding_curve.move` | Not Started | ~400 | Pool, buy, sell |
-| └ Graduation | `graduation.move` | Not Started | ~250 | DEX migration |
-| └ Vesting | `vesting.move` | Not Started | ~150 | LP vesting |
-| **DEX Adapters** | | | | |
-| └ Cetus | `dex_adapters/cetus.move` | Not Started | ~200 | Cetus integration |
-| └ Turbos | `dex_adapters/turbos.move` | Not Started | ~150 | Turbos integration |
-| └ FlowX | `dex_adapters/flowx.move` | Not Started | ~150 | FlowX integration |
-| **Events** | `events.move` | Not Started | ~100 | Event definitions |
+| └ Vesting | `vesting.move` | Not Started | ~250 | Core VestingSchedule |
+| └ Linear | `linear.move` | Not Started | ~100 | Linear calculations |
+| └ Milestone | `milestone.move` | Not Started | ~150 | Future: milestone-based |
+| **Utilities** | | | | |
+| └ Batch | `batch.move` | Not Started | ~80 | Batch operations |
+| └ Admin | `admin.move` | Not Started | ~100 | Admin functions |
+| **Events** | `events.move` | Not Started | ~80 | Event definitions |
 | **Tests** | `tests/` | Not Started | - | Unit & integration tests |
 
 **Blockers:** None
 
+**Why Standalone:**
+- Reusable across Launchpad, Staking, DAO
+- Can be sold as separate B2B service
+- Independent versioning and audits
+
 **Next Steps:**
 1. [ ] Set up Move project structure
-2. [ ] Implement core/math.move
-3. [ ] Implement core/access.move
-4. [ ] Implement core/errors.move
-5. [ ] Implement config.move
+2. [ ] Implement core vesting.move
+3. [ ] Implement linear.move
+4. [ ] Integrate with Launchpad graduation
+
+**Specification:** See [VESTING.md](./VESTING.md)
 
 ---
 
-### 2. Staking (sui-staking)
+### 3. Staking (sui-staking)
 
 **Overall Progress:** 0%
 
@@ -121,7 +182,7 @@ PHASE 7: MAINNET LAUNCH
 
 ---
 
-### 3. DAO (sui-dao)
+### 4. DAO (sui-dao)
 
 **Overall Progress:** 0%
 
@@ -150,7 +211,7 @@ PHASE 7: MAINNET LAUNCH
 
 ---
 
-### 4. Multisig (sui-multisig)
+### 5. Multisig (sui-multisig)
 
 **Overall Progress:** 0%
 
@@ -189,7 +250,7 @@ PHASE 7: MAINNET LAUNCH
 
 | Product | Unit Tests | Integration Tests | Testnet Deploy |
 |---------|------------|-------------------|----------------|
-| Launchpad | Not Started | Not Started | Not Started |
+| Launchpad | 6 Passing | Not Started | Not Started |
 | Staking | Not Started | Not Started | Not Started |
 | DAO | Not Started | Not Started | Not Started |
 | Multisig | Not Started | Not Started | Not Started |
@@ -231,7 +292,51 @@ PHASE 7: MAINNET LAUNCH
 
 ## Changelog
 
-### 2026-01-21
+### 2026-01-21 (Night)
+- Implemented Fund Safety features (95% complete):
+  - Treasury Cap Freeze - TreasuryCap frozen after minting (no more tokens ever)
+  - LP Token Distribution - Creator (0-30% vested), Community (70%+ burned)
+  - Creator LP Vesting - 6 month cliff + 12 month linear vesting
+  - Hard Fee Caps - Max 5% creator fee, max 10% platform fee
+- Updated graduation.move with LP distribution flow:
+  - Added CreatorLPVesting<LP> struct for vesting LP tokens
+  - Added LPDistributionConfig for configuration
+  - Added distribute_lp_tokens() for DEX adapters
+  - Added claim_creator_lp() for creators to claim vested LP
+- Updated all DEX adapters with LP distribution support
+- Updated config.move with LP distribution settings
+- Created FUND_SAFETY.md documentation
+- Fixed all lint warnings
+- Build passes clean (6 suppressed warnings, all intentional)
+
+### 2026-01-21 (Late Evening)
+- Extracted vesting to standalone package (sui_vesting)
+  - vesting.move now placeholder with integration docs
+  - Created VESTING.md specification document
+  - Updated all documentation to reflect change
+- Vesting will be reusable B2B service
+
+### 2026-01-21 (Evening)
+- Implemented all launchpad modules:
+  - core/math.move - u256-based bonding curve calculations
+  - core/access.move - Capability-based access control
+  - core/errors.move - Comprehensive error codes
+  - config.move - Platform configuration with SuiDex support
+  - events.move - Event definitions with emit helpers
+  - bonding_curve.move - Pool, buy, sell with reentrancy protection
+  - registry.move - Token registration and lookup
+  - graduation.move - DEX migration with hot potato pattern
+  - vesting.move - LP token vesting schedules (now placeholder)
+  - launchpad.move - Main entry points and init
+- Implemented DEX adapters:
+  - dex_adapters/cetus.move
+  - dex_adapters/turbos.move
+  - dex_adapters/flowx.move
+  - dex_adapters/suidex.move (new DEX)
+- Added graduation token allocations (creator 0-5%, platform 2.5-5%)
+- Build successful
+
+### 2026-01-21 (Morning)
 - Created documentation structure
 - Created ARCHITECTURE.md
 - Created LAUNCHPAD.md with PBT token creation flow
@@ -252,6 +357,7 @@ PHASE 7: MAINNET LAUNCH
 | Repository Structure | [REPOSITORY.md](./REPOSITORY.md) |
 | Sui CLI Reference | [SUI_CLI.md](./SUI_CLI.md) |
 | Launchpad Doc | [LAUNCHPAD.md](./LAUNCHPAD.md) |
+| **Vesting Doc** | [VESTING.md](./VESTING.md) |
 | Staking Doc | [STAKING.md](./STAKING.md) |
 | DAO Doc | [DAO.md](./DAO.md) |
 | Multisig Doc | [MULTISIG.md](./MULTISIG.md) |
@@ -264,7 +370,8 @@ PHASE 7: MAINNET LAUNCH
 ## Notes
 
 - All products designed to be self-contained with their own core utilities
-- No shared dependencies between products (easier audits, independent deployments)
+- **Vesting is a standalone package** (`sui_vesting`) for reusability across products
+- Launchpad contains a placeholder that will integrate with sui_vesting when ready
 - Launchpad is the primary product - build first
-- Staking, DAO, Multisig can be built in parallel after Launchpad core is done
+- Vesting, Staking, DAO, Multisig can be built in parallel after Launchpad core is done
 - All products launch simultaneously

@@ -180,13 +180,23 @@ your-org/
 │       ├── config.move          # Platform config
 │       ├── bonding_curve.move   # Trading pool
 │       ├── graduation.move      # DEX migration
-│       ├── vesting.move         # LP vesting
+│       ├── vesting.move         # PLACEHOLDER (see sui_vesting)
 │       ├── dex_adapters/        # DEX integrations
-│       │   ├── adapter_trait.move
 │       │   ├── cetus.move
 │       │   ├── turbos.move
-│       │   └── flowx.move
+│       │   ├── flowx.move
+│       │   └── suidex.move
 │       └── events.move
+│
+├── sui-vesting/                 # STANDALONE: Vesting Service
+│   ├── Move.toml
+│   └── sources/
+│       ├── vesting.move         # Core vesting logic
+│       ├── linear.move          # Linear vesting
+│       ├── milestone.move       # Milestone-based (future)
+│       ├── batch.move           # Batch operations
+│       ├── admin.move           # Admin functions
+│       └── events.move          # Event definitions
 │
 ├── sui-staking/                 # PRODUCT 2: Staking Service
 │   ├── Move.toml
@@ -346,11 +356,15 @@ LAYER 5: CUSTOM TX SECURITY (DAO/Multisig)
 
 | Order | Product | Estimated LOC | Dependencies |
 |-------|---------|---------------|--------------|
-| 1 | sui-launchpad | ~1,500 | None (self-contained) |
-| 2 | sui-staking | ~800 | None |
-| 3 | sui-dao | ~1,200 | None (optional staking) |
-| 4 | sui-multisig | ~600 | None |
-| **Total** | | **~4,100** | |
+| 1 | sui-launchpad | ~1,800 | None (self-contained) |
+| 2 | sui-vesting | ~760 | None (standalone service) |
+| 3 | sui-staking | ~940 | Optional: sui-vesting |
+| 4 | sui-dao | ~1,510 | Optional: sui-vesting, staking |
+| 5 | sui-multisig | ~820 | None |
+| **Total** | | **~5,830** | |
+
+> **Note:** sui-vesting is a reusable standalone package that can be integrated by
+> Launchpad, Staking, DAO, or any external project. See [VESTING.md](./VESTING.md).
 
 ---
 
@@ -364,19 +378,28 @@ STEP 1: Deploy sui-launchpad
              └──► Set fees
              └──► Ready for token creation
 
-STEP 2: Deploy sui-staking
+STEP 2: Deploy sui-vesting (standalone)
+        │
+        └──► Package ID: 0xVESTING...
+             └──► Initialize config
+             └──► Ready for vesting schedules
+             └──► Integrate with launchpad graduation
+
+STEP 3: Deploy sui-staking
         │
         └──► Package ID: 0xSTAKING...
              └──► Initialize registry
+             └──► Optional: integrate sui-vesting
              └──► Ready for pool creation
 
-STEP 3: Deploy sui-dao
+STEP 4: Deploy sui-dao
         │
         └──► Package ID: 0xDAO...
              └──► Initialize registry
+             └──► Optional: integrate sui-vesting
              └──► Ready for DAO creation
 
-STEP 4: Deploy sui-multisig
+STEP 5: Deploy sui-multisig
         │
         └──► Package ID: 0xMULTISIG...
              └──► Initialize
@@ -395,6 +418,7 @@ ALL PRODUCTS LAUNCH SIMULTANEOUSLY
 | [REPOSITORY.md](./REPOSITORY.md) | Complete repository structure |
 | [SUI_CLI.md](./SUI_CLI.md) | Sui CLI commands reference |
 | [LAUNCHPAD.md](./LAUNCHPAD.md) | Launchpad detailed spec |
+| [VESTING.md](./VESTING.md) | **Vesting service spec (standalone)** |
 | [STAKING.md](./STAKING.md) | Staking service spec |
 | [DAO.md](./DAO.md) | DAO service spec |
 | [MULTISIG.md](./MULTISIG.md) | Multisig wallet spec |
