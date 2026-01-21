@@ -359,24 +359,29 @@ module sui_launchpad::bonding_curve {
         // Lock pool (reentrancy guard)
         pool.locked = true;
 
-        // Calculate SUI out using bonding curve
-        let gross_sui_out = math::sui_out(
+        // Calculate ideal SUI out using bonding curve
+        let ideal_sui_out = math::sui_out(
             tokens_in,
             pool.circulating_supply,
             pool.base_price,
             pool.slope
         );
 
+        // Cap to available pool balance (accounts for fees taken on buy side)
+        // This ensures sells always succeed when pool has liquidity
+        let pool_balance = balance::value(&pool.sui_balance);
+        let gross_sui_out = math::min(ideal_sui_out, pool_balance);
+
+        // Ensure pool has enough SUI (should always pass after the min cap above)
+        assert!(pool_balance >= gross_sui_out, EInsufficientPayment);
+
         // Calculate fees (hard-capped at 5% each for safety)
         let platform_fee = math::bps(gross_sui_out, config::trading_fee_bps(config));
         let creator_fee = math::bps(gross_sui_out, pool.creator_fee_bps);
         let net_sui_out = gross_sui_out - platform_fee - creator_fee;
 
-        // Slippage check
+        // Slippage check - protects user from getting less than expected
         assert!(net_sui_out >= min_sui_out, ESlippageExceeded);
-
-        // Check pool has enough SUI
-        assert!(balance::value(&pool.sui_balance) >= gross_sui_out, EInsufficientPayment);
 
         // Update pool state
         pool.circulating_supply = pool.circulating_supply - tokens_in;

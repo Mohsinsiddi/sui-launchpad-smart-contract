@@ -125,11 +125,153 @@ module sui_launchpad::launchpad_tests {
         scenario.end();
     }
 
-    // NOTE: Sell tests are commented out due to a known limitation in the bonding curve.
-    // The curve formula calculates SUI return based on the ideal curve, but fees on buy
-    // mean the pool has less SUI than the formula expects. This needs to be addressed
-    // in bonding_curve.move by adjusting the sell calculation to account for fees.
-    // For now, sell functionality testing is covered by slippage exceeded tests.
+    #[test]
+    fun test_sell_entry_point() {
+        let mut scenario = test_scenario::begin(admin());
+
+        test_utils::setup_launchpad(&mut scenario);
+
+        scenario.next_tx(creator());
+        {
+            let _pool_id = test_utils::create_test_pool(&mut scenario, 0);
+        };
+
+        // Buy tokens first
+        scenario.next_tx(seller());
+        {
+            let mut pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let payment = mint_sui(10_000_000_000, &mut scenario); // 10 SUI
+
+            let tokens = launchpad::buy<TEST_COIN>(
+                &mut pool,
+                &config,
+                payment,
+                0,
+                &clock,
+                scenario.ctx(),
+            );
+
+            // Strict assertions
+            assert!(coin::value(&tokens) > 0, 100);
+            assert!(bonding_curve::trade_count(&pool) == 1, 101);
+
+            transfer::public_transfer(tokens, seller());
+            test_scenario::return_shared(pool);
+            test_scenario::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Sell half of the tokens
+        scenario.next_tx(seller());
+        {
+            let mut pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let mut tokens = scenario.take_from_sender<Coin<TEST_COIN>>();
+            let tokens_to_sell = coin::value(&tokens) / 2;
+            let tokens_to_sell_coin = coin::split(&mut tokens, tokens_to_sell, scenario.ctx());
+
+            let supply_before = bonding_curve::circulating_supply(&pool);
+
+            let sui_received = launchpad::sell<TEST_COIN>(
+                &mut pool,
+                &config,
+                tokens_to_sell_coin,
+                0,
+                &clock,
+                scenario.ctx(),
+            );
+
+            // Strict assertions
+            assert!(coin::value(&sui_received) > 0, 200);
+            assert!(bonding_curve::circulating_supply(&pool) == supply_before - tokens_to_sell, 201);
+            assert!(bonding_curve::trade_count(&pool) == 2, 202);
+
+            transfer::public_transfer(sui_received, seller());
+            transfer::public_transfer(tokens, seller());
+            test_scenario::return_shared(pool);
+            test_scenario::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_sell_and_transfer_entry_point() {
+        let mut scenario = test_scenario::begin(admin());
+
+        test_utils::setup_launchpad(&mut scenario);
+
+        scenario.next_tx(creator());
+        {
+            let _pool_id = test_utils::create_test_pool(&mut scenario, 0);
+        };
+
+        // Buy tokens
+        scenario.next_tx(seller());
+        {
+            let mut pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let payment = mint_sui(10_000_000_000, &mut scenario);
+
+            let tokens = launchpad::buy<TEST_COIN>(
+                &mut pool,
+                &config,
+                payment,
+                0,
+                &clock,
+                scenario.ctx(),
+            );
+
+            transfer::public_transfer(tokens, seller());
+            test_scenario::return_shared(pool);
+            test_scenario::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Sell half and auto-transfer
+        scenario.next_tx(seller());
+        {
+            let mut pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let mut tokens = scenario.take_from_sender<Coin<TEST_COIN>>();
+            let tokens_to_sell = coin::value(&tokens) / 2;
+            let tokens_to_sell_coin = coin::split(&mut tokens, tokens_to_sell, scenario.ctx());
+
+            launchpad::sell_and_transfer<TEST_COIN>(
+                &mut pool,
+                &config,
+                tokens_to_sell_coin,
+                0,
+                &clock,
+                scenario.ctx(),
+            );
+
+            transfer::public_transfer(tokens, seller());
+            test_scenario::return_shared(pool);
+            test_scenario::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Verify seller received SUI
+        scenario.next_tx(seller());
+        {
+            let sui = scenario.take_from_sender<Coin<SUI>>();
+            assert!(coin::value(&sui) > 0, 300);
+            transfer::public_transfer(sui, seller());
+        };
+
+        scenario.end();
+    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // VIEW FUNCTION TESTS
@@ -479,7 +621,76 @@ module sui_launchpad::launchpad_tests {
         scenario.end();
     }
 
-    // NOTE: test_price_decreases_on_sell is commented out due to the same bonding curve
-    // fee accounting limitation described above. The sell function needs adjustment
-    // to properly account for the fee delta between buy and sell operations.
+    #[test]
+    fun test_price_decreases_on_sell() {
+        let mut scenario = test_scenario::begin(admin());
+
+        test_utils::setup_launchpad(&mut scenario);
+
+        scenario.next_tx(creator());
+        {
+            let _pool_id = test_utils::create_test_pool(&mut scenario, 0);
+        };
+
+        // Buy tokens
+        scenario.next_tx(seller());
+        {
+            let mut pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let payment = mint_sui(10_000_000_000, &mut scenario);
+
+            let tokens = launchpad::buy<TEST_COIN>(
+                &mut pool,
+                &config,
+                payment,
+                0,
+                &clock,
+                scenario.ctx(),
+            );
+
+            transfer::public_transfer(tokens, seller());
+            test_scenario::return_shared(pool);
+            test_scenario::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Sell and verify price decreases
+        scenario.next_tx(seller());
+        {
+            let mut pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let config = scenario.take_shared<LaunchpadConfig>();
+            let clock = create_clock(&mut scenario);
+
+            let price_before = launchpad::get_price(&pool);
+
+            let mut tokens = scenario.take_from_sender<Coin<TEST_COIN>>();
+            let tokens_to_sell = coin::value(&tokens) / 2;
+            let tokens_to_sell_coin = coin::split(&mut tokens, tokens_to_sell, scenario.ctx());
+
+            let sui_received = launchpad::sell<TEST_COIN>(
+                &mut pool,
+                &config,
+                tokens_to_sell_coin,
+                0,
+                &clock,
+                scenario.ctx(),
+            );
+
+            let price_after = launchpad::get_price(&pool);
+
+            // Strict assertions
+            assert!(price_after < price_before, 400);
+            assert!(coin::value(&sui_received) > 0, 401);
+
+            transfer::public_transfer(sui_received, seller());
+            transfer::public_transfer(tokens, seller());
+            test_scenario::return_shared(pool);
+            test_scenario::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        scenario.end();
+    }
 }
