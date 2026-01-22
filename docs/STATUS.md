@@ -16,8 +16,8 @@ This document tracks the development progress of all products in the DeFi suite.
 | **Vesting** | DONE | 95% | ~760 | ~1,100 | 51 |
 | **Staking** | DONE | 100% | ~940 | ~1,900 | 92 |
 | **DAO** | Not Started | 0% | ~1,510 | 0 | 0 |
-| **Multisig** | Not Started | 0% | ~820 | 0 | 0 |
-| **Total** | - | 60% | ~5,830 | ~5,200 | 281 |
+| **Multisig** | DONE | 100% | ~820 | ~1,976 | 33 |
+| **Total** | - | 80% | ~5,830 | ~7,176 | 314 |
 
 > **Note:** Vesting has been extracted as a standalone package (`sui_vesting`) for reusability.
 > The launchpad contains a placeholder that will integrate with sui_vesting when ready.
@@ -56,7 +56,11 @@ PHASE 4: DAO
 
 PHASE 5: MULTISIG
 ═════════════════
-[░░░░░░░░░░░░░░░░░░░░] 0%
+[████████████████████] 100% DONE - 33 tests
+→ Separate package: sui_multisig
+→ N-of-M signature wallets
+→ Multi-coin vault (generic Coin<T>)
+→ Custom TX execution with hot potato auth
 
 PHASE 6: INTEGRATION & TESTING
 ══════════════════════════════
@@ -266,28 +270,59 @@ PHASE 8: MAINNET LAUNCH
 
 ---
 
-### 5. Multisig (sui-multisig)
+### 5. Multisig (sui_multisig) - STANDALONE PACKAGE
 
-**Overall Progress:** 0%
+**Overall Progress:** 100% - 33 tests passing
 
 | Module | File | Status | Lines | Notes |
 |--------|------|--------|-------|-------|
-| **Core** | | | | |
-| └ Access | `core/access.move` | Not Started | ~40 | AdminCap |
 | **Main** | | | | |
-| └ Wallet | `wallet.move` | Not Started | ~250 | Wallet creation |
-| └ Proposal | `proposal.move` | Not Started | ~300 | Proposal management |
-| └ Custom TX | `custom_tx.move` | Not Started | ~150 | Custom TX execution |
-| **Events** | `events.move` | Not Started | ~80 | Event definitions |
-| **Tests** | `tests/` | Not Started | - | Unit & integration tests |
+| └ Registry | `registry.move` | DONE | ~310 | Platform config, AdminCap |
+| └ Wallet | `wallet.move` | DONE | ~347 | Wallet creation, signer management |
+| └ Vault | `vault.move` | DONE | ~176 | Generic multi-coin Bag storage |
+| └ Proposal | `proposal.move` | DONE | ~826 | Proposals, approvals, execution, custom TX |
+| └ Events | `events.move` | DONE | ~317 | All event definitions |
+| **Tests** | | | | |
+| └ test_coins | `tests/test_coins.move` | DONE | ~45 | TEST_TOKEN_A/B/C |
+| └ mock_target | `tests/mock_target.move` | DONE | ~149 | Mock contract for custom TX |
+| └ multisig_tests | `tests/multisig_tests.move` | DONE | ~2,392 | 33 comprehensive tests |
 
-**Blockers:** None (independent)
+**Blockers:** None
+
+**Why Standalone:**
+- Reusable for any project needing multi-sig control
+- Independent versioning and audits
+- Can be sold as separate B2B service
+
+**Completed:**
+- [x] Set up Move project structure (sui move new)
+- [x] registry.move - Platform config, AdminCap, creation/execution fees
+- [x] wallet.move - N-of-M wallet creation, signer add/remove, threshold change
+- [x] vault.move - Generic multi-coin vault with Bag storage
+- [x] proposal.move - Full proposal lifecycle with hot potato auth
+- [x] events.move - All wallet, proposal, vault, custom TX events
+- [x] Custom TX execution with MultisigAuth hot potato pattern
+- [x] Comprehensive tests (33 tests):
+  - Wallet creation tests (1-of-1, 2-of-3, validation errors)
+  - Multi-coin vault tests (SUI, TOKEN_A, TOKEN_B, TOKEN_C)
+  - Proposal lifecycle tests (approve, reject, cancel, expiry)
+  - Transfer tests (all token types via generic proposal)
+  - Custom TX tests (strict data verification on external contracts)
+  - Signer management tests (add, remove, auto-threshold adjustment)
+  - Edge case tests (duplicate signers, non-signer access)
+
+**Key Features:**
+- N-of-M signature wallets (1-of-1 to any configuration)
+- Generic multi-coin vault (any Coin<T> including SUI)
+- Hot potato MultisigAuth for custom TX execution
+- Auto-approval when threshold reached on create (1-of-1 wallets)
+- Proposal expiration and nonce-based replay protection
+- Platform creation/execution fees
 
 **Next Steps:**
-1. [ ] Set up Move project structure
-2. [ ] Implement core/access.move
-3. [ ] Implement wallet.move
-4. [ ] Implement proposal.move
+1. [ ] Deploy to testnet
+2. [ ] Integrate with frontend
+3. [ ] Audit
 
 ---
 
@@ -309,7 +344,7 @@ PHASE 8: MAINNET LAUNCH
 | Vesting | 51 Passing | Not Started | Not Started |
 | Staking | 92 Passing | Not Started | Not Started |
 | DAO | Not Started | Not Started | Not Started |
-| Multisig | Not Started | Not Started | Not Started |
+| Multisig | 33 Passing | Not Started | Not Started |
 
 ---
 
@@ -347,6 +382,31 @@ PHASE 8: MAINNET LAUNCH
 ---
 
 ## Changelog
+
+### 2026-01-22 (Multisig Complete)
+- Implemented sui_multisig package (100% complete):
+  - registry.move - Platform config, AdminCap, fees
+  - wallet.move - N-of-M wallet creation, signer management
+  - vault.move - Generic multi-coin vault (Bag-based)
+  - proposal.move - Full proposal lifecycle with custom TX
+  - events.move - All event definitions
+- Key features implemented:
+  - Generic Coin<T> support (SUI is just Coin<SUI>)
+  - Multi-coin vault holds any token type
+  - Hot potato MultisigAuth for custom TX execution
+  - Auto-approval on creation for 1-of-1 wallets
+  - Proposal expiration and nonce replay protection
+- Comprehensive test coverage (33 tests):
+  - Wallet creation and validation tests
+  - Multi-coin vault tests (4 token types)
+  - Proposal lifecycle tests
+  - Transfer tests for all token types
+  - Strict custom TX tests with data verification
+  - Signer management tests
+- Created test helpers:
+  - test_coins.move - TEST_TOKEN_A/B/C
+  - mock_target.move - MockTreasury for custom TX testing
+- Bug fixed: Auto-approval now correctly sets STATUS_APPROVED when threshold reached on create
 
 ### 2026-01-22 (Continued)
 - Added configurable stake/unstake fees to sui_staking:

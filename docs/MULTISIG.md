@@ -805,16 +805,18 @@ struct MultisigRegistry has key {
 
 ---
 
-## Estimated Lines of Code
+## Actual Lines of Code
 
 | File | Lines | Description |
 |------|-------|-------------|
-| core/access.move | ~40 | AdminCap |
-| wallet.move | ~250 | Wallet creation, deposits |
-| proposal.move | ~300 | Proposal CRUD, approvals |
-| custom_tx.move | ~150 | Custom TX execution |
-| events.move | ~80 | Event definitions |
-| **Total** | **~820** | |
+| registry.move | ~310 | Platform config, AdminCap, fees |
+| wallet.move | ~347 | Wallet creation, signer management |
+| vault.move | ~176 | Generic multi-coin Bag storage |
+| proposal.move | ~826 | Proposal lifecycle, custom TX auth |
+| events.move | ~317 | All event definitions |
+| **Total Sources** | **~1,976** | |
+| **Tests** | **~2,586** | 33 tests |
+| **Grand Total** | **~4,562** | |
 
 ---
 
@@ -822,10 +824,41 @@ struct MultisigRegistry has key {
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Core utilities | Not started | |
-| Wallet | Not started | |
-| Proposal | Not started | |
-| Custom TX | Not started | |
-| Events | Not started | |
-| Tests | Not started | |
+| Registry | ✅ DONE | Platform config, AdminCap |
+| Wallet | ✅ DONE | N-of-M creation, signer management |
+| Vault | ✅ DONE | Generic Coin<T> with Bag |
+| Proposal | ✅ DONE | Full lifecycle + custom TX |
+| Events | ✅ DONE | All events defined |
+| Tests | ✅ DONE | 33 tests passing |
 | Audit | Not started | |
+
+---
+
+## Implementation Notes
+
+### Key Differences from Spec
+
+1. **No separate custom_tx.move** - Custom TX logic integrated into proposal.move
+2. **Added vault.move** - Dedicated module for multi-coin storage
+3. **Added registry.move** - Platform configuration and fees
+4. **Hot potato auth** - MultisigAuth struct with no abilities for secure custom TX
+5. **Generic Coin<T>** - All tokens (including SUI) handled uniformly
+
+### Custom TX Flow (Implemented)
+
+```
+1. propose_custom_tx() → Creates proposal with target_id + function_name
+2. approve() → Signers approve until threshold
+3. execute_custom_tx() → Returns MultisigAuth hot potato
+4. External contract consumes auth via consume_auth() or consume_auth_for_target()
+5. Auth verified: wallet_id, proposal_id, target_id match
+```
+
+### Test Coverage
+
+- Wallet creation (1-of-1, 2-of-3, validation errors)
+- Multi-coin vault (SUI + 3 custom tokens)
+- Proposal lifecycle (create, approve, reject, cancel, expire)
+- Token transfers (all types via generic proposal)
+- Custom TX with strict data verification
+- Signer management (add, remove, auto-adjust threshold)
