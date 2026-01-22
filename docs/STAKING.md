@@ -604,6 +604,53 @@ struct StakingRegistry has key {
 
 ---
 
+## Governance-Only Pools
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    GOVERNANCE-ONLY POOLS                                 │
+└─────────────────────────────────────────────────────────────────────────┘
+
+For DAOs that want staking for voting power WITHOUT reward distribution:
+
+create_governance_pool<StakeToken>()
+════════════════════════════════════
+
+Configuration:
+├── reward_rate: 0               (no rewards)
+├── governance_only: true        (flag for identification)
+├── end_time: u64::MAX           (runs indefinitely)
+├── min_stake_duration: config   (optional lock period)
+└── early_unstake_fee: config    (discourage short-term staking)
+
+
+Use Cases:
+══════════
+1. B2B Token DAOs without reward budget
+2. Pure governance tokens (no inflation)
+3. Vote-locking mechanisms
+
+
+User Flow:
+══════════
+    User stakes $TOKEN
+         │
+         ├── NO rewards earned
+         └── Gets voting power = staked amount
+         │
+         ▼
+    Uses StakingPosition to vote in DAO
+
+
+Benefits:
+═════════
+• Simple governance without tokenomics complexity
+• Prevents flash-loan voting attacks
+• Creator controls lock duration requirements
+```
+
+---
+
 ## Integration with DAO
 
 ```
@@ -611,26 +658,34 @@ struct StakingRegistry has key {
 │                    STAKING + DAO INTEGRATION                             │
 └─────────────────────────────────────────────────────────────────────────┘
 
-StakingPosition can be used for DAO voting power:
+StakingPosition is used for DAO voting power:
 
-Option 1: Direct Integration
-════════════════════════════
-DAO queries staking contract for user's staked amount
+IMPLEMENTED APPROACH:
+═════════════════════
+DAO takes StakingPosition as voting power proof
 
-    dao::vote(proposal_id, position_id)
-        └── staking::get_voting_power(position_id)
-            └── returns position.staked_amount
+    dao::vote<StakeT, RewardT>(proposal, position, support)
+        │
+        └── Verify position.pool_id matches governance.staking_pool_id
+        └── voting_power = position.staked_amount
+        └── Record vote
 
 
-Option 2: Snapshot
-══════════════════
-DAO takes snapshot of all positions at proposal creation
+TWO POOL MODES:
+═══════════════
 
-    On proposal create:
-    └── Record staked amounts for all positions
+Mode A: Rewards + Governance (Launchpad tokens)
+───────────────────────────────────────────────
+    • create_pool<StakeT, RewardT>(reward_coins, ...)
+    • Users stake → earn rewards + voting power
+    • reward_rate > 0
 
-    On vote:
-    └── Use snapshot amount (prevents flash-stake attacks)
+Mode B: Governance Only (B2B DAOs)
+──────────────────────────────────
+    • create_governance_pool<StakeT>(...)
+    • Users stake → voting power only (no rewards)
+    • reward_rate = 0
+    • governance_only = true
 
 
 Benefits:
@@ -638,22 +693,26 @@ Benefits:
 • Staked tokens have governance rights
 • Encourages long-term holding
 • Aligns incentives (stakers = committed holders)
+• Prevents flash-loan attacks (must stake to vote)
+• Flexible for projects with or without rewards
 ```
 
 ---
 
-## Estimated Lines of Code
+## Actual Lines of Code
 
 | File | Lines | Description |
 |------|-------|-------------|
-| core/math.move | ~80 | Safe math, reward calculations |
+| core/math.move | ~180 | Safe math, reward calculations, fee math |
 | core/access.move | ~60 | AdminCap, PoolAdminCap |
-| factory.move | ~150 | Pool creation, registry |
-| pool.move | ~350 | Stake, unstake, claim logic |
-| position.move | ~100 | Position NFT, metadata |
-| emissions.move | ~120 | Reward rate, distribution |
-| events.move | ~80 | Event definitions |
-| **Total** | **~940** | |
+| core/errors.move | ~40 | Error codes |
+| core/events.move | ~300 | Event definitions + emit functions |
+| core/position.move | ~410 | Position NFT, reward tracking |
+| core/pool.move | ~760 | Stake, unstake, claim, governance pools |
+| factory.move | ~420 | Pool creation, registry, governance pool factory |
+| **Total Sources** | **~2,170** | |
+| **Tests** | **~1,460** | 97 tests |
+| **Grand Total** | **~3,630** | |
 
 ---
 
@@ -661,11 +720,25 @@ Benefits:
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Core utilities | Not started | |
-| Factory | Not started | |
-| Pool | Not started | |
-| Position | Not started | |
-| Emissions | Not started | |
-| Events | Not started | |
-| Tests | Not started | |
+| Core math | ✅ DONE | MasterChef reward calculations |
+| Core access | ✅ DONE | AdminCap, PoolAdminCap |
+| Core errors | ✅ DONE | Error codes |
+| Core events | ✅ DONE | All events with emit functions |
+| Pool | ✅ DONE | Stake, unstake, claim, add_stake, partial_unstake |
+| Position | ✅ DONE | Position NFT with reward debt tracking |
+| Factory | ✅ DONE | Pool creation, registry, metadata |
+| Governance Pools | ✅ DONE | create_governance_pool (0 rewards, voting only) |
+| Tests | ✅ DONE | 97 tests passing |
 | Audit | Not started | |
+
+---
+
+## Key Features Implemented
+
+1. **MasterChef-style Rewards** - Proportional reward distribution
+2. **Dual Token Support** - Different stake/reward tokens
+3. **Position NFT** - Transferable staking positions
+4. **Fee System** - Stake fee, unstake fee, early unstake fee
+5. **Governance Pools** - Zero-reward pools for DAO voting power
+6. **Platform Registry** - Track all pools with metadata
+7. **Admin Controls** - Pause, config updates, fee withdrawal

@@ -65,6 +65,8 @@ module sui_staking::pool {
         unstake_fee_bps: u64,
         /// Whether pool is paused
         paused: bool,
+        /// Whether this is a governance-only pool (no rewards, just voting power)
+        governance_only: bool,
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -108,6 +110,7 @@ module sui_staking::pool {
             stake_fee_bps,
             unstake_fee_bps,
             paused: false,
+            governance_only: false,
         };
 
         let pool = StakingPool {
@@ -131,6 +134,63 @@ module sui_staking::pool {
         (pool, admin_cap)
     }
 
+    /// Create a governance-only staking pool (no rewards, just voting power)
+    /// Users stake tokens to gain voting power in DAO governance
+    /// No reward token required - staking is purely for governance participation
+    public fun create_governance_pool<StakeToken>(
+        min_stake_duration_ms: u64,
+        early_unstake_fee_bps: u64,
+        stake_fee_bps: u64,
+        unstake_fee_bps: u64,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): (StakingPool<StakeToken, StakeToken>, PoolAdminCap) {
+        // Validations
+        assert!(math::is_valid_early_fee(early_unstake_fee_bps), errors::fee_too_high());
+        assert!(math::is_valid_stake_fee(stake_fee_bps), errors::fee_too_high());
+        assert!(math::is_valid_unstake_fee(unstake_fee_bps), errors::fee_too_high());
+
+        let current_time = sui::clock::timestamp_ms(clock);
+
+        // Governance pools have no end time (run indefinitely)
+        // Use max u64 as end time
+        let start_time_ms = current_time;
+        let end_time_ms = 18446744073709551615u64; // u64::MAX
+
+        let config = PoolConfig {
+            creator: tx_context::sender(ctx),
+            start_time_ms,
+            end_time_ms,
+            total_rewards: 0,
+            min_stake_duration_ms,
+            early_unstake_fee_bps,
+            stake_fee_bps,
+            unstake_fee_bps,
+            paused: false,
+            governance_only: true,
+        };
+
+        let pool = StakingPool {
+            id: object::new(ctx),
+            config,
+            total_staked: 0,
+            stake_balance: balance::zero(),
+            reward_balance: balance::zero(), // No rewards for governance pools
+            acc_reward_per_share: 0,
+            last_reward_time_ms: start_time_ms,
+            reward_rate: 0, // No rewards
+            total_rewards_distributed: 0,
+            collected_fees: balance::zero(),
+        };
+
+        let pool_id = object::uid_to_inner(&pool.id);
+        let admin_cap = access::create_pool_admin_cap(pool_id, ctx);
+
+        pool_emit_governance_created(&pool, ctx);
+
+        (pool, admin_cap)
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // STAKING OPERATIONS
     // ═══════════════════════════════════════════════════════════════════════
@@ -148,7 +208,10 @@ module sui_staking::pool {
         // Validations
         assert!(!pool.config.paused, errors::pool_paused());
         assert!(current_time >= pool.config.start_time_ms, errors::pool_not_started());
-        assert!(current_time < pool.config.end_time_ms, errors::pool_ended());
+        // Governance-only pools have no end time (they run indefinitely)
+        if (!pool.config.governance_only) {
+            assert!(current_time < pool.config.end_time_ms, errors::pool_ended());
+        };
         assert!(amount >= MIN_STAKE_AMOUNT, errors::amount_too_small());
 
         // Update pool rewards before any state changes
@@ -620,6 +683,24 @@ module sui_staking::pool {
         );
     }
 
+    /// Emit governance pool created event
+    fun pool_emit_governance_created<StakeToken, RewardToken>(
+        pool: &StakingPool<StakeToken, RewardToken>,
+        ctx: &TxContext,
+    ) {
+        let stake_type = std::type_name::with_original_ids<StakeToken>();
+
+        events::emit_governance_pool_created(
+            object::uid_to_inner(&pool.id),
+            tx_context::sender(ctx),
+            std::type_name::into_string(stake_type),
+            pool.config.min_stake_duration_ms,
+            pool.config.early_unstake_fee_bps,
+            pool.config.stake_fee_bps,
+            pool.config.unstake_fee_bps,
+        );
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // GETTERS
     // ═══════════════════════════════════════════════════════════════════════
@@ -675,6 +756,12 @@ module sui_staking::pool {
     public fun config_early_unstake_fee_bps(config: &PoolConfig): u64 { config.early_unstake_fee_bps }
     public fun config_stake_fee_bps(config: &PoolConfig): u64 { config.stake_fee_bps }
     public fun config_unstake_fee_bps(config: &PoolConfig): u64 { config.unstake_fee_bps }
+    public fun config_governance_only(config: &PoolConfig): bool { config.governance_only }
+
+    /// Check if pool is governance-only (no rewards)
+    public fun is_governance_only<StakeToken, RewardToken>(pool: &StakingPool<StakeToken, RewardToken>): bool {
+        pool.config.governance_only
+    }
 
     /// Calculate pending rewards for a position (view function)
     public fun pending_rewards<StakeToken, RewardToken>(

@@ -21,6 +21,17 @@ module sui_staking::events {
         unstake_fee_bps: u64,
     }
 
+    /// Emitted when a governance-only pool is created (no rewards, just voting power)
+    public struct GovernancePoolCreated has copy, drop {
+        pool_id: ID,
+        creator: address,
+        stake_token_type: std::ascii::String,
+        min_stake_duration_ms: u64,
+        early_unstake_fee_bps: u64,
+        stake_fee_bps: u64,
+        unstake_fee_bps: u64,
+    }
+
     /// Emitted when rewards are added to a pool
     public struct RewardsAdded has copy, drop {
         pool_id: ID,
@@ -265,6 +276,26 @@ module sui_staking::events {
             setup_fee,
             platform_fee_bps,
             updated_by,
+        });
+    }
+
+    public fun emit_governance_pool_created(
+        pool_id: ID,
+        creator: address,
+        stake_token_type: std::ascii::String,
+        min_stake_duration_ms: u64,
+        early_unstake_fee_bps: u64,
+        stake_fee_bps: u64,
+        unstake_fee_bps: u64,
+    ) {
+        event::emit(GovernancePoolCreated {
+            pool_id,
+            creator,
+            stake_token_type,
+            min_stake_duration_ms,
+            early_unstake_fee_bps,
+            stake_fee_bps,
+            unstake_fee_bps,
         });
     }
 }

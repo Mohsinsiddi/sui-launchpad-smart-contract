@@ -1256,4 +1256,249 @@ module sui_staking::staking_tests {
         clock::destroy_for_testing(clock);
         ts::end(scenario);
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // GOVERNANCE-ONLY POOL TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_create_governance_pool() {
+        let mut scenario = setup_test();
+        let mut clock = create_clock(&mut scenario, 1000);
+
+        // Create governance-only pool (no rewards)
+        ts::next_tx(&mut scenario, ADMIN);
+        {
+            let (pool, admin_cap) = pool::create_governance_pool<STAKE>(
+                MS_PER_DAY,  // min stake duration
+                500,         // 5% early unstake fee
+                0,           // 0% stake fee
+                0,           // 0% unstake fee
+                &clock,
+                ts::ctx(&mut scenario),
+            );
+
+            // Verify it's a governance-only pool
+            assert!(pool::is_governance_only(&pool), 0);
+            assert!(pool::reward_rate(&pool) == 0, 1);
+            assert!(pool::reward_balance(&pool) == 0, 2);
+            assert!(pool::config_governance_only(pool::config(&pool)), 3);
+
+            transfer::public_share_object(pool);
+            transfer::public_transfer(admin_cap, ADMIN);
+        };
+
+        clock::destroy_for_testing(clock);
+        ts::end(scenario);
+    }
+
+    #[test]
+    fun test_governance_pool_stake_and_unstake() {
+        let mut scenario = setup_test();
+        let mut clock = create_clock(&mut scenario, 1000);
+
+        // Create governance-only pool
+        ts::next_tx(&mut scenario, ADMIN);
+        {
+            let (pool, admin_cap) = pool::create_governance_pool<STAKE>(
+                MS_PER_DAY,
+                500,
+                0,
+                0,
+                &clock,
+                ts::ctx(&mut scenario),
+            );
+            transfer::public_share_object(pool);
+            transfer::public_transfer(admin_cap, ADMIN);
+        };
+
+        // Stake tokens
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let mut pool = ts::take_shared<StakingPool<STAKE, STAKE>>(&scenario);
+            let stake_coins = mint_stake_coins(&mut scenario, 10_000_000_000);
+
+            let position = pool::stake(&mut pool, stake_coins, &clock, ts::ctx(&mut scenario));
+
+            // Verify position
+            assert!(position::staked_amount(&position) == 10_000_000_000, 0);
+            assert!(pool::total_staked(&pool) == 10_000_000_000, 1);
+
+            ts::return_shared(pool);
+            transfer::public_transfer(position, ALICE);
+        };
+
+        // Advance time past min stake duration
+        clock::set_for_testing(&mut clock, 1000 + MS_PER_DAY + 1);
+
+        // Unstake
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let mut pool = ts::take_shared<StakingPool<STAKE, STAKE>>(&scenario);
+            let position = ts::take_from_sender<StakingPosition<STAKE>>(&scenario);
+
+            let (stake_coin, reward_coin) = pool::unstake(&mut pool, position, &clock, ts::ctx(&mut scenario));
+
+            // Full stake returned (no early fee since min duration passed)
+            assert!(coin::value(&stake_coin) == 10_000_000_000, 0);
+            // No rewards for governance-only pool
+            assert!(coin::value(&reward_coin) == 0, 1);
+            assert!(pool::total_staked(&pool) == 0, 2);
+
+            ts::return_shared(pool);
+            coin::burn_for_testing(stake_coin);
+            coin::burn_for_testing(reward_coin);
+        };
+
+        clock::destroy_for_testing(clock);
+        ts::end(scenario);
+    }
+
+    #[test]
+    fun test_governance_pool_no_end_time() {
+        let mut scenario = setup_test();
+        let mut clock = create_clock(&mut scenario, 1000);
+
+        // Create governance-only pool
+        ts::next_tx(&mut scenario, ADMIN);
+        {
+            let (pool, admin_cap) = pool::create_governance_pool<STAKE>(
+                0, // No min stake duration
+                0, // No early unstake fee
+                0,
+                0,
+                &clock,
+                ts::ctx(&mut scenario),
+            );
+            transfer::public_share_object(pool);
+            transfer::public_transfer(admin_cap, ADMIN);
+        };
+
+        // Advance time far into the future (1 year)
+        clock::set_for_testing(&mut clock, 1000 + (MS_PER_DAY * 365));
+
+        // Should still be able to stake (governance pools have no end time)
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let mut pool = ts::take_shared<StakingPool<STAKE, STAKE>>(&scenario);
+            let stake_coins = mint_stake_coins(&mut scenario, 5_000_000_000);
+
+            let position = pool::stake(&mut pool, stake_coins, &clock, ts::ctx(&mut scenario));
+
+            // Stake succeeded even after "1 year"
+            assert!(position::staked_amount(&position) == 5_000_000_000, 0);
+
+            ts::return_shared(pool);
+            transfer::public_transfer(position, ALICE);
+        };
+
+        clock::destroy_for_testing(clock);
+        ts::end(scenario);
+    }
+
+    #[test]
+    fun test_governance_pool_early_unstake_fee() {
+        let mut scenario = setup_test();
+        let mut clock = create_clock(&mut scenario, 1000);
+
+        // Create governance pool with early unstake fee
+        ts::next_tx(&mut scenario, ADMIN);
+        {
+            let (pool, admin_cap) = pool::create_governance_pool<STAKE>(
+                MS_PER_WEEK,  // 7 day min stake
+                1000,         // 10% early unstake fee
+                0,
+                0,
+                &clock,
+                ts::ctx(&mut scenario),
+            );
+            transfer::public_share_object(pool);
+            transfer::public_transfer(admin_cap, ADMIN);
+        };
+
+        // Stake tokens
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let mut pool = ts::take_shared<StakingPool<STAKE, STAKE>>(&scenario);
+            let stake_coins = mint_stake_coins(&mut scenario, 10_000_000_000);
+            let position = pool::stake(&mut pool, stake_coins, &clock, ts::ctx(&mut scenario));
+            ts::return_shared(pool);
+            transfer::public_transfer(position, ALICE);
+        };
+
+        // Unstake early (only 1 day passed)
+        clock::set_for_testing(&mut clock, 1000 + MS_PER_DAY);
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let mut pool = ts::take_shared<StakingPool<STAKE, STAKE>>(&scenario);
+            let position = ts::take_from_sender<StakingPosition<STAKE>>(&scenario);
+
+            let (stake_coin, reward_coin) = pool::unstake(&mut pool, position, &clock, ts::ctx(&mut scenario));
+
+            // 10% early fee applied: 10B - 1B = 9B
+            assert!(coin::value(&stake_coin) == 9_000_000_000, 0);
+            // 1B collected as fees
+            assert!(pool::collected_fees(&pool) == 1_000_000_000, 1);
+            // No rewards
+            assert!(coin::value(&reward_coin) == 0, 2);
+
+            ts::return_shared(pool);
+            coin::burn_for_testing(stake_coin);
+            coin::burn_for_testing(reward_coin);
+        };
+
+        clock::destroy_for_testing(clock);
+        ts::end(scenario);
+    }
+
+    #[test]
+    fun test_governance_pool_voting_power() {
+        let mut scenario = setup_test();
+        let mut clock = create_clock(&mut scenario, 1000);
+
+        // Create governance pool
+        ts::next_tx(&mut scenario, ADMIN);
+        {
+            let (pool, admin_cap) = pool::create_governance_pool<STAKE>(
+                0, 0, 0, 0,
+                &clock,
+                ts::ctx(&mut scenario),
+            );
+            transfer::public_share_object(pool);
+            transfer::public_transfer(admin_cap, ADMIN);
+        };
+
+        // Alice stakes 10B
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let mut pool = ts::take_shared<StakingPool<STAKE, STAKE>>(&scenario);
+            let stake_coins = mint_stake_coins(&mut scenario, 10_000_000_000);
+            let position = pool::stake(&mut pool, stake_coins, &clock, ts::ctx(&mut scenario));
+
+            // Voting power = staked amount
+            assert!(position::staked_amount(&position) == 10_000_000_000, 0);
+
+            ts::return_shared(pool);
+            transfer::public_transfer(position, ALICE);
+        };
+
+        // Bob stakes 5B
+        ts::next_tx(&mut scenario, BOB);
+        {
+            let mut pool = ts::take_shared<StakingPool<STAKE, STAKE>>(&scenario);
+            let stake_coins = mint_stake_coins(&mut scenario, 5_000_000_000);
+            let position = pool::stake(&mut pool, stake_coins, &clock, ts::ctx(&mut scenario));
+
+            // Bob's voting power
+            assert!(position::staked_amount(&position) == 5_000_000_000, 0);
+            // Total staked (can be used for quorum calculations)
+            assert!(pool::total_staked(&pool) == 15_000_000_000, 1);
+
+            ts::return_shared(pool);
+            transfer::public_transfer(position, BOB);
+        };
+
+        clock::destroy_for_testing(clock);
+        ts::end(scenario);
+    }
 }

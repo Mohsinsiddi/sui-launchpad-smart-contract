@@ -62,6 +62,8 @@ module sui_staking::factory {
         stake_token_type: std::ascii::String,
         /// Reward token type name
         reward_token_type: std::ascii::String,
+        /// Whether this is a governance-only pool
+        governance_only: bool,
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -143,6 +145,7 @@ module sui_staking::factory {
             created_at_ms: current_time,
             stake_token_type: std::type_name::into_string(stake_type),
             reward_token_type: std::type_name::into_string(reward_type),
+            governance_only: false,
         };
 
         vector::push_back(&mut registry.pool_ids, pool_id);
@@ -198,6 +201,111 @@ module sui_staking::factory {
             created_at_ms: current_time,
             stake_token_type: std::type_name::into_string(stake_type),
             reward_token_type: std::type_name::into_string(reward_type),
+            governance_only: false,
+        };
+
+        vector::push_back(&mut registry.pool_ids, pool_id);
+        table::add(&mut registry.pool_metadata, pool_id, metadata);
+        registry.total_pools = registry.total_pools + 1;
+
+        // Share the pool
+        transfer::public_share_object(pool);
+
+        admin_cap
+    }
+
+    /// Create a governance-only staking pool (no rewards, just voting power for DAO)
+    /// Useful for B2B DAOs that want staking for governance without reward distribution
+    public fun create_governance_pool<StakeToken>(
+        registry: &mut StakingRegistry,
+        setup_fee: Coin<SUI>,
+        min_stake_duration_ms: u64,
+        early_unstake_fee_bps: u64,
+        stake_fee_bps: u64,
+        unstake_fee_bps: u64,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): PoolAdminCap {
+        // Check platform not paused
+        assert!(!registry.paused, sui_staking::errors::platform_paused());
+
+        // Collect setup fee
+        let fee_amount = coin::value(&setup_fee);
+        assert!(fee_amount >= registry.config.setup_fee, sui_staking::errors::insufficient_fee());
+        balance::join(&mut registry.collected_fees, coin::into_balance(setup_fee));
+
+        // Create governance pool
+        let (pool, admin_cap) = pool::create_governance_pool<StakeToken>(
+            min_stake_duration_ms,
+            early_unstake_fee_bps,
+            stake_fee_bps,
+            unstake_fee_bps,
+            clock,
+            ctx,
+        );
+
+        let pool_id = pool::pool_id(&pool);
+        let current_time = sui::clock::timestamp_ms(clock);
+
+        // Get type name for metadata
+        let stake_type = std::type_name::with_original_ids<StakeToken>();
+
+        // Store metadata
+        let metadata = PoolMetadata {
+            creator: tx_context::sender(ctx),
+            created_at_ms: current_time,
+            stake_token_type: std::type_name::into_string(stake_type),
+            reward_token_type: std::type_name::into_string(stake_type), // Same as stake for governance
+            governance_only: true,
+        };
+
+        vector::push_back(&mut registry.pool_ids, pool_id);
+        table::add(&mut registry.pool_metadata, pool_id, metadata);
+        registry.total_pools = registry.total_pools + 1;
+
+        // Share the pool
+        transfer::public_share_object(pool);
+
+        admin_cap
+    }
+
+    /// Create a governance pool without setup fee (admin only)
+    public fun create_governance_pool_free<StakeToken>(
+        registry: &mut StakingRegistry,
+        _admin_cap: &AdminCap,
+        min_stake_duration_ms: u64,
+        early_unstake_fee_bps: u64,
+        stake_fee_bps: u64,
+        unstake_fee_bps: u64,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): PoolAdminCap {
+        // Check platform not paused
+        assert!(!registry.paused, sui_staking::errors::platform_paused());
+
+        // Create governance pool
+        let (pool, admin_cap) = pool::create_governance_pool<StakeToken>(
+            min_stake_duration_ms,
+            early_unstake_fee_bps,
+            stake_fee_bps,
+            unstake_fee_bps,
+            clock,
+            ctx,
+        );
+
+        let pool_id = pool::pool_id(&pool);
+        let current_time = sui::clock::timestamp_ms(clock);
+
+        // Get type name for metadata
+        let stake_type = std::type_name::with_original_ids<StakeToken>();
+
+        // Store metadata
+        let metadata = PoolMetadata {
+            creator: tx_context::sender(ctx),
+            created_at_ms: current_time,
+            stake_token_type: std::type_name::into_string(stake_type),
+            reward_token_type: std::type_name::into_string(stake_type),
+            governance_only: true,
         };
 
         vector::push_back(&mut registry.pool_ids, pool_id);
@@ -303,6 +411,7 @@ module sui_staking::factory {
     public fun metadata_created_at_ms(metadata: &PoolMetadata): u64 { metadata.created_at_ms }
     public fun metadata_stake_token_type(metadata: &PoolMetadata): std::ascii::String { metadata.stake_token_type }
     public fun metadata_reward_token_type(metadata: &PoolMetadata): std::ascii::String { metadata.reward_token_type }
+    public fun metadata_governance_only(metadata: &PoolMetadata): bool { metadata.governance_only }
 
     // ═══════════════════════════════════════════════════════════════════════
     // TEST HELPERS

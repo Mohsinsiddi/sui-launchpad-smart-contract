@@ -14,10 +14,10 @@ This document tracks the development progress of all products in the DeFi suite.
 |---------|--------|----------|----------|------------|-------|
 | **Launchpad** | DONE | 100% | ~1,800 | ~2,200 | 138 |
 | **Vesting** | DONE | 95% | ~760 | ~1,100 | 51 |
-| **Staking** | DONE | 100% | ~940 | ~1,900 | 92 |
-| **DAO** | Not Started | 0% | ~1,510 | 0 | 0 |
+| **Staking** | DONE | 100% | ~940 | ~2,170 | 97 |
+| **DAO** | DONE | 100% | ~1,510 | ~5,200 | 58 |
 | **Multisig** | DONE | 100% | ~820 | ~1,976 | 33 |
-| **Total** | - | 80% | ~5,830 | ~7,176 | 314 |
+| **Total** | - | 100% | ~5,830 | ~12,650 | 377 |
 
 > **Note:** Vesting has been extracted as a standalone package (`sui_vesting`) for reusability.
 > The launchpad contains a placeholder that will integrate with sui_vesting when ready.
@@ -52,7 +52,14 @@ PHASE 3: STAKING
 
 PHASE 4: DAO
 ════════════
-[░░░░░░░░░░░░░░░░░░░░] 0%
+[████████████████████] 100% DONE - 58 tests
+→ Separate package: sui_dao
+→ Token-based governance (staking integration)
+→ NFT-based governance (1 NFT = 1 vote)
+→ Council fast-track (majority voting) + veto + emergency proposals
+→ Guardian system (emergency pause)
+→ Delegation support
+→ Multi-token treasury
 
 PHASE 5: MULTISIG
 ═════════════════
@@ -241,32 +248,77 @@ PHASE 8: MAINNET LAUNCH
 
 ---
 
-### 4. DAO (sui-dao)
+### 4. DAO (sui_dao) - STANDALONE PACKAGE
 
-**Overall Progress:** 0%
+**Overall Progress:** 100% - 58 tests passing
 
 | Module | File | Status | Lines | Notes |
 |--------|------|--------|-------|-------|
 | **Core** | | | | |
-| └ Math | `core/math.move` | Not Started | ~60 | Voting math |
-| └ Access | `core/access.move` | Not Started | ~70 | AdminCap, DAOAdminCap |
+| └ Math | `core/math.move` | DONE | ~303 | Quorum, voting, fee calculations |
+| └ Access | `core/access.move` | DONE | ~153 | AdminCap, DAOAdminCap, CouncilCap |
+| └ Errors | `core/errors.move` | DONE | ~190 | Error codes (100-999) |
 | **Main** | | | | |
-| └ Factory | `factory.move` | Not Started | ~150 | DAO creation |
-| └ Governance | `governance.move` | Not Started | ~400 | Main logic |
-| └ Proposal | `proposal.move` | Not Started | ~250 | Proposal management |
-| └ Custom TX | `custom_tx.move` | Not Started | ~200 | Custom TX execution |
-| └ Timelock | `timelock.move` | Not Started | ~100 | Execution delay |
-| └ Treasury | `treasury.move` | Not Started | ~180 | DAO treasury |
-| **Events** | `events.move` | Not Started | ~100 | Event definitions |
-| **Tests** | `tests/` | Not Started | - | Unit & integration tests |
+| └ Registry | `registry.move` | DONE | ~444 | Platform config, DAO registration |
+| └ Events | `events.move` | DONE | ~850 | All event definitions |
+| └ Governance | `governance.move` | DONE | ~840 | Staking + NFT governance + Guardian |
+| └ Proposal | `proposal.move` | DONE | ~1080 | Proposal lifecycle, actions, DAOAuth |
+| └ Voting | `voting.move` | DONE | ~100 | Vote with stake or NFTs |
+| └ NFT Vault | `nft_vault.move` | DONE | ~361 | Lock NFTs for voting power |
+| └ Council | `council.move` | DONE | ~227 | Fast-track (majority) + veto + emergency |
+| └ Guardian | `guardian.move` | DONE | ~145 | Emergency pause capability |
+| └ Delegation | `delegation.move` | DONE | ~389 | Delegate voting power |
+| └ Treasury | `treasury.move` | DONE | ~287 | Multi-token treasury |
 
-**Blockers:** None (independent)
+**Blockers:** None
+
+**Why Standalone:**
+- Integrates with sui_staking for token-based governance
+- NFT governance as separate B2B service
+- Independent versioning and audits
+- Reusable treasury system
+
+**Completed:**
+- [x] Set up Move project structure (sui move new)
+- [x] core/errors.move - Error codes (100-999)
+- [x] core/access.move - AdminCap, DAOAdminCap, CouncilCap
+- [x] core/math.move - Quorum, voting math, council thresholds
+- [x] registry.move - Platform config, fee collection
+- [x] events.move - All DAO events (45+ event types)
+- [x] governance.move - Dual mode (staking + NFT) + Guardian support
+- [x] proposal.move - Full proposal lifecycle with hot potato DAOAuth
+- [x] voting.move - Vote with staking positions or NFT vaults
+- [x] nft_vault.move - Lock NFTs for voting power (1 NFT = 1 vote)
+- [x] council.move - Fast-track (majority voting) + veto (1/3+1) + emergency proposals
+- [x] guardian.move - Emergency pause by trusted guardian
+- [x] delegation.move - Delegate staked voting power
+- [x] treasury.move - Multi-token treasury (Bag-based)
+- [x] Comprehensive tests (58 tests)
+
+**Key Features:**
+- **Dual Governance Modes:**
+  - STAKING mode: Uses sui_staking positions for voting power
+  - NFT mode: Lock NFTs in vault for voting power (1 NFT = 1 vote)
+- **Council System:**
+  - Fast-track: Council majority (>50%) votes to fast-track proposals
+  - Veto: 1/3+1 council threshold blocks proposals during timelock
+  - Emergency Proposals: Council creates urgent proposals (1hr delay, 1day voting)
+- **Guardian System:**
+  - Trusted address for emergency pause
+  - Admin sets guardian (e.g., security multisig)
+  - Guardian can only pause, not unpause (admin unpauses)
+- **Delegation:** Delegate voting power to trusted addresses
+- **Multi-Action Proposals:** Treasury transfer, config update, custom TX, text
+- **Hot Potato DAOAuth:** Secure custom TX execution
+- **Configurable:** Quorum, voting delay, timelock, approval threshold
 
 **Next Steps:**
-1. [ ] Set up Move project structure
-2. [ ] Implement core modules
-3. [ ] Implement factory.move
-4. [ ] Implement governance.move
+1. [ ] Deploy to testnet
+2. [ ] Integrate with frontend
+3. [ ] Add integration tests with sui_staking
+4. [ ] Audit
+
+**Specification:** See [DAO.md](./DAO.md)
 
 ---
 
@@ -342,8 +394,8 @@ PHASE 8: MAINNET LAUNCH
 |---------|------------|-------------------|----------------|
 | Launchpad | 138 Passing | Not Started | Not Started |
 | Vesting | 51 Passing | Not Started | Not Started |
-| Staking | 92 Passing | Not Started | Not Started |
-| DAO | Not Started | Not Started | Not Started |
+| Staking | 97 Passing | Not Started | Not Started |
+| DAO | 58 Passing | Not Started | Not Started |
 | Multisig | 33 Passing | Not Started | Not Started |
 
 ---
@@ -382,6 +434,62 @@ PHASE 8: MAINNET LAUNCH
 ---
 
 ## Changelog
+
+### 2026-01-22 (DAO Improvements)
+- Enhanced sui_dao with council majority voting and guardian system (58 tests):
+  - council.move - Council majority (>50%) required for fast-track (was single member)
+  - council.move - Emergency proposals (1hr delay, 1day voting) for urgent matters
+  - guardian.move - Guardian system for emergency pause capability
+  - governance.move - Added guardian field and functions
+  - proposal.move - Added fast_track_votes tracking and is_emergency flag
+  - events.move - Added 6 new events (fast-track vote, emergency proposal, guardian)
+  - errors.move - Added 5 new error codes for guardian and fast-track
+- New features:
+  - Council majority voting: Multiple council members vote before fast-track executes
+  - Emergency proposals: Council can create urgent proposals with reduced timelines
+  - Guardian role: Trusted address (e.g., security multisig) can emergency pause DAO
+- Tests: 58 passing (+2 new tests)
+
+### 2026-01-22 (DAO Complete)
+- Implemented sui_dao package (100% complete, 56 tests):
+  - core/errors.move - Error codes (100-999)
+  - core/access.move - AdminCap, DAOAdminCap, CouncilCap
+  - core/math.move - Quorum, voting math, council thresholds
+  - registry.move - Platform config, fee collection
+  - events.move - All DAO events (40+ event types)
+  - governance.move - Dual mode governance (staking + NFT)
+  - proposal.move - Full proposal lifecycle
+  - voting.move - Vote with staking positions or NFTs
+  - nft_vault.move - Lock NFTs for voting power
+  - council.move - Fast-track + veto powers
+  - delegation.move - Delegate voting power
+  - treasury.move - Multi-token treasury
+- Key features:
+  - Dual governance modes: STAKING (uses sui_staking) and NFT (1 NFT = 1 vote)
+  - Council system with fast-track and veto (1/3+1 threshold)
+  - Delegation of staked voting power
+  - Multi-action proposals (treasury, config, custom TX, text)
+  - Hot potato DAOAuth for secure custom TX execution
+  - Configurable quorum, voting delay, timelock, approval threshold
+- Tests: 56 passing
+
+### 2026-01-22 (Staking Governance Pools)
+- Added governance-only pool support to sui_staking:
+  - `create_governance_pool<T>()` - Creates pool with 0 rewards
+  - `governance_only` flag in PoolConfig
+  - No end time for governance pools (run indefinitely)
+  - Users stake for voting power only, no rewards
+- Use cases:
+  - B2B DAOs without reward budget
+  - Pure governance tokens (no inflation)
+  - Vote-locking mechanisms
+- Added 5 new tests (97 total):
+  - test_create_governance_pool
+  - test_governance_pool_stake_and_unstake
+  - test_governance_pool_no_end_time
+  - test_governance_pool_early_unstake_fee
+  - test_governance_pool_voting_power
+- Updated STAKING.md documentation
 
 ### 2026-01-22 (Multisig Complete)
 - Implemented sui_multisig package (100% complete):
