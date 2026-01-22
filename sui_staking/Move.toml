@@ -1,5 +1,5 @@
 [package]
-name = "sui_vesting"
+name = "sui_staking"
 version = "1.0.0"
 edition = "2024"
 
@@ -7,7 +7,7 @@ edition = "2024"
 [dependencies]
 
 [addresses]
-sui_vesting = "0x0"
+sui_staking = "0x0"
 
 [dev-dependencies]
 

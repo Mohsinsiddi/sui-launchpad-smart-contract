@@ -14,10 +14,10 @@ This document tracks the development progress of all products in the DeFi suite.
 |---------|--------|----------|----------|------------|-------|
 | **Launchpad** | DONE | 100% | ~1,800 | ~2,200 | 138 |
 | **Vesting** | DONE | 95% | ~760 | ~1,100 | 51 |
-| **Staking** | Not Started | 0% | ~940 | 0 | 0 |
+| **Staking** | DONE | 100% | ~940 | ~1,900 | 92 |
 | **DAO** | Not Started | 0% | ~1,510 | 0 | 0 |
 | **Multisig** | Not Started | 0% | ~820 | 0 | 0 |
-| **Total** | - | 40% | ~5,830 | ~3,300 | 189 |
+| **Total** | - | 60% | ~5,830 | ~5,200 | 281 |
 
 > **Note:** Vesting has been extracted as a standalone package (`sui_vesting`) for reusability.
 > The launchpad contains a placeholder that will integrate with sui_vesting when ready.
@@ -44,7 +44,11 @@ PHASE 2: VESTING (Standalone Service)
 
 PHASE 3: STAKING
 ════════════════
-[░░░░░░░░░░░░░░░░░░░░] 0%
+[████████████████████] 100% DONE - 92 tests
+→ Separate package: sui_staking
+→ MasterChef-style reward model
+→ Position NFT, pool factory
+→ Configurable stake/unstake/early fees
 
 PHASE 4: DAO
 ════════════
@@ -168,30 +172,68 @@ PHASE 8: MAINNET LAUNCH
 
 ---
 
-### 3. Staking (sui-staking)
+### 3. Staking (sui_staking) - STANDALONE PACKAGE
 
-**Overall Progress:** 0%
+**Overall Progress:** 100% - 92 tests passing
 
 | Module | File | Status | Lines | Notes |
 |--------|------|--------|-------|-------|
 | **Core** | | | | |
-| └ Math | `core/math.move` | Not Started | ~80 | Reward calculations |
-| └ Access | `core/access.move` | Not Started | ~60 | AdminCap, PoolAdminCap |
+| └ Math | `core/math.move` | DONE | ~240 | MasterChef reward calculations |
+| └ Access | `core/access.move` | DONE | ~75 | AdminCap, PoolAdminCap |
+| └ Errors | `core/errors.move` | DONE | ~100 | Error codes (100-599) |
+| └ Events | `core/events.move` | DONE | ~220 | All event definitions |
+| └ Position | `core/position.move` | DONE | ~280 | Position NFT |
+| └ Pool | `core/pool.move` | DONE | ~580 | Stake, unstake, claim |
 | **Main** | | | | |
-| └ Factory | `factory.move` | Not Started | ~150 | Pool creation |
-| └ Pool | `pool.move` | Not Started | ~350 | Stake, unstake, claim |
-| └ Position | `position.move` | Not Started | ~100 | Position NFT |
-| └ Emissions | `emissions.move` | Not Started | ~120 | Reward distribution |
-| **Events** | `events.move` | Not Started | ~80 | Event definitions |
-| **Tests** | `tests/` | Not Started | - | Unit & integration tests |
+| └ Factory | `factory.move` | DONE | ~290 | Registry, pool creation |
+| **Tests** | | | | |
+| └ test_coins | `tests/test_coins.move` | DONE | ~150 | STAKE, REWARD tokens |
+| └ staking_tests | `tests/staking_tests.move` | DONE | ~1050 | Integration tests (20) |
+| └ math_tests | `tests/math_tests.move` | DONE | ~650 | Math precision (39) |
+| └ fairness_tests | `tests/fairness_tests.move` | DONE | ~420 | Invariant tests (20) |
+| **Docs** | | | | |
+| └ STAKING.md | `docs/STAKING.md` | DONE | ~150 | Technical docs |
+| └ TOKENOMICS.md | `docs/TOKENOMICS.md` | DONE | ~450 | Math model & economics |
 
-**Blockers:** None (independent of Launchpad)
+**Blockers:** None
+
+**Why Standalone:**
+- Tokens stake after DEX graduation (not integrated with launchpad)
+- Independent versioning and audits
+- Reusable for any token pair
+
+**Completed:**
+- [x] Set up Move project structure (sui move new)
+- [x] core/errors.move - Error codes (100-599)
+- [x] core/access.move - Capabilities (AdminCap, PoolAdminCap)
+- [x] core/math.move - MasterChef reward model (PRECISION=1e18)
+- [x] core/events.move - All staking events
+- [x] core/position.move - StakingPosition NFT
+- [x] core/pool.move - StakingPool with stake/unstake/claim
+- [x] factory.move - StakingRegistry, pool creation
+- [x] test_coins.move - STAKE, REWARD test tokens
+- [x] staking_tests.move - Integration tests (14 tests)
+- [x] math_tests.move - Precision tests (39 tests)
+- [x] fairness_tests.move - Invariant tests (20 tests)
+- [x] STAKING.md - Technical documentation
+- [x] TOKENOMICS.md - Economic model documentation
+
+**Key Features:**
+- MasterChef-style accumulated reward per share
+- Generic dual-token pools: StakingPool<StakeToken, RewardToken>
+- Transferable Position NFTs
+- Configurable stake fees (0-5% on deposits)
+- Configurable unstake fees (0-5% on withdrawals)
+- Early unstake fees (configurable, max 10%)
+- Platform setup fees (1 SUI default)
 
 **Next Steps:**
-1. [ ] Set up Move project structure
-2. [ ] Implement core modules
-3. [ ] Implement factory.move
-4. [ ] Implement pool.move
+1. [ ] Deploy to testnet
+2. [ ] Integrate with frontend
+3. [ ] Audit
+
+**Specification:** See [sui_staking/docs/STAKING.md](../sui_staking/docs/STAKING.md)
 
 ---
 
@@ -265,7 +307,7 @@ PHASE 8: MAINNET LAUNCH
 |---------|------------|-------------------|----------------|
 | Launchpad | 138 Passing | Not Started | Not Started |
 | Vesting | 51 Passing | Not Started | Not Started |
-| Staking | Not Started | Not Started | Not Started |
+| Staking | 92 Passing | Not Started | Not Started |
 | DAO | Not Started | Not Started | Not Started |
 | Multisig | Not Started | Not Started | Not Started |
 
@@ -305,6 +347,38 @@ PHASE 8: MAINNET LAUNCH
 ---
 
 ## Changelog
+
+### 2026-01-22 (Continued)
+- Added configurable stake/unstake fees to sui_staking:
+  - Stake fee (0-5% max, applied on deposit)
+  - Unstake fee (0-5% max, applied on withdrawal)
+  - Combined with early unstake fee for early exits
+- Updated PoolConfig with stake_fee_bps, unstake_fee_bps
+- Updated pool::create(), pool::stake(), pool::unstake(), pool::add_stake(), pool::unstake_partial()
+- Updated factory::create_pool(), factory::create_pool_free()
+- Updated events with new fee fields
+- Added 6 new fee-specific tests (92 total tests)
+- Updated TOKENOMICS.md with fee structure documentation
+- Updated TEST_PATTERNS.md
+
+### 2026-01-22 (Late)
+- Implemented sui_staking package (100% complete):
+  - core/math.move - MasterChef reward model (PRECISION=1e18)
+  - core/access.move - AdminCap, PoolAdminCap capabilities
+  - core/errors.move - Error codes (100-599)
+  - core/events.move - All staking events
+  - core/position.move - StakingPosition NFT
+  - core/pool.move - StakingPool with stake/unstake/claim
+  - factory.move - StakingRegistry, pool creation
+- Comprehensive test coverage (86 tests):
+  - 14 integration tests (full staking lifecycle)
+  - 39 math precision tests (reward calculations)
+  - 20 fairness invariant tests (reward debt correctness)
+  - 13 unit tests (position, access, math modules)
+- Created documentation:
+  - sui_staking/docs/STAKING.md - Technical docs
+  - sui_staking/docs/TOKENOMICS.md - Economic model
+- Key features: MasterChef model, Position NFTs, early fees, platform fees
 
 ### 2026-01-22
 - Implemented sui_vesting package (95% complete):
@@ -386,7 +460,10 @@ PHASE 8: MAINNET LAUNCH
 | Sui CLI Reference | [SUI_CLI.md](./SUI_CLI.md) |
 | Launchpad Doc | [LAUNCHPAD.md](./LAUNCHPAD.md) |
 | **Vesting Doc** | [VESTING.md](./VESTING.md) |
-| Staking Doc | [STAKING.md](./STAKING.md) |
+| **Staking Doc** | [sui_staking/docs/STAKING.md](../sui_staking/docs/STAKING.md) |
+| **Staking Tokenomics** | [sui_staking/docs/TOKENOMICS.md](../sui_staking/docs/TOKENOMICS.md) |
+| **Test Patterns** | [TEST_PATTERNS.md](./TEST_PATTERNS.md) |
+| Staking Spec (legacy) | [STAKING.md](./STAKING.md) |
 | DAO Doc | [DAO.md](./DAO.md) |
 | Multisig Doc | [MULTISIG.md](./MULTISIG.md) |
 | GitHub Repo | TBD |
