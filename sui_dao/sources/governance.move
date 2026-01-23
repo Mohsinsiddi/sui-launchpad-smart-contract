@@ -161,6 +161,75 @@ module sui_dao::governance {
         (governance, admin_cap)
     }
 
+    /// Create staking-based governance with custom parameters (admin only, no fee)
+    /// Used by launchpad during graduation for automatic DAO creation
+    public fun create_staking_governance_free(
+        _admin_cap: &access::AdminCap,
+        registry: &mut DAORegistry,
+        name: String,
+        staking_pool_id: ID,
+        quorum_bps: u64,
+        voting_delay_ms: u64,
+        voting_period_ms: u64,
+        timelock_delay_ms: u64,
+        proposal_threshold_bps: u64,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): (Governance, DAOAdminCap) {
+        registry::assert_not_paused(registry);
+        // No fee collection - admin privilege
+
+        let config = GovernanceConfig {
+            quorum_bps,
+            quorum_votes: 0,
+            voting_delay_ms,
+            voting_period_ms,
+            timelock_delay_ms,
+            fast_track_timelock_ms: MIN_TIMELOCK_MS,
+            proposal_threshold: proposal_threshold_bps,
+            approval_threshold_bps: 5000, // 50%
+        };
+
+        let governance = Governance {
+            id: object::new(ctx),
+            name,
+            description_hash: std::string::utf8(b""), // Empty for auto-created DAOs
+            config,
+            voting_mode: VOTING_MODE_STAKING,
+            staking_pool_id: option::some(staking_pool_id),
+            nft_collection_type: option::none(),
+            paused: false,
+            council_enabled: false,
+            council_members: vec_set::empty(),
+            delegation_enabled: false,
+            treasury_id: option::none(),
+            guardian: option::none(),
+            proposal_count: 0,
+            created_at_ms: clock.timestamp_ms(),
+            creator: ctx.sender(),
+        };
+
+        let governance_id = object::id(&governance);
+        registry::register_governance(registry, governance_id);
+
+        let admin_cap = access::create_dao_admin_cap(governance_id, ctx);
+
+        events::emit_governance_created(
+            governance_id,
+            ctx.sender(),
+            governance.name,
+            VOTING_MODE_STAKING,
+            governance.staking_pool_id,
+            config.quorum_bps,
+            config.voting_delay_ms,
+            config.voting_period_ms,
+            config.timelock_delay_ms,
+            config.proposal_threshold,
+        );
+
+        (governance, admin_cap)
+    }
+
     /// Create NFT-based governance
     public fun create_nft_governance<NFT: key + store>(
         registry: &mut DAORegistry,

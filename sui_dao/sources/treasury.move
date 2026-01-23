@@ -1,9 +1,11 @@
 /// DAO Treasury - Multi-token treasury controlled by governance
+/// Supports both fungible tokens (Coin<T>) and NFTs (key + store objects)
 module sui_dao::treasury {
     use sui::balance::{Self, Balance};
     use sui::bag::{Self, Bag};
     use sui::coin::{Self, Coin};
     use sui::sui::SUI;
+    use sui::dynamic_object_field as dof;
     use sui_dao::access::DAOAdminCap;
     use sui_dao::errors;
     use sui_dao::events;
@@ -15,6 +17,7 @@ module sui_dao::treasury {
     // ═══════════════════════════════════════════════════════════════════════
 
     /// Multi-token treasury for a DAO
+    /// Supports fungible tokens via token_balances and NFTs via dynamic_object_field
     public struct Treasury has key {
         id: UID,
         /// The governance that controls this treasury
@@ -23,6 +26,14 @@ module sui_dao::treasury {
         sui_balance: Balance<SUI>,
         /// Other token balances (keyed by type name)
         token_balances: Bag,
+        /// Counter for NFTs of each type (for generating unique keys)
+        nft_counters: Bag,
+    }
+
+    /// Key for storing NFTs in dynamic object field
+    public struct NFTKey has copy, drop, store {
+        nft_type: std::ascii::String,
+        index: u64,
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -42,6 +53,7 @@ module sui_dao::treasury {
             governance_id: object::id(governance),
             sui_balance: balance::zero(),
             token_balances: bag::new(ctx),
+            nft_counters: bag::new(ctx),
         };
 
         let treasury_id = object::id(&treasury);
@@ -165,6 +177,100 @@ module sui_dao::treasury {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
+    // NFT DEPOSITS (Anyone can deposit)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Deposit an NFT into the treasury (e.g., Cetus/Turbos Position NFT)
+    /// NFTs are stored using dynamic_object_field with a unique key
+    public fun deposit_nft<NFT: key + store>(
+        treasury: &mut Treasury,
+        nft: NFT,
+        ctx: &TxContext,
+    ) {
+        let nft_type = std::type_name::with_original_ids<NFT>().into_string();
+        let nft_id = object::id(&nft);
+
+        // Get or initialize the counter for this NFT type
+        let index = if (treasury.nft_counters.contains(nft_type)) {
+            let counter: &mut u64 = treasury.nft_counters.borrow_mut(nft_type);
+            let current = *counter;
+            *counter = current + 1;
+            current
+        } else {
+            treasury.nft_counters.add(nft_type, 1u64);
+            0
+        };
+
+        // Create unique key and store NFT
+        let key = NFTKey { nft_type, index };
+        dof::add(&mut treasury.id, key, nft);
+
+        events::emit_treasury_nft_deposit(
+            object::id(treasury),
+            nft_type,
+            nft_id,
+            ctx.sender(),
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // NFT WITHDRAWALS (Requires DAO Auth from proposal)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Withdraw an NFT from treasury (requires DAOAuth from executed proposal)
+    /// The index identifies which NFT of this type to withdraw (LIFO order typically)
+    public fun withdraw_nft<NFT: key + store>(
+        treasury: &mut Treasury,
+        auth: DAOAuth,
+        index: u64,
+        recipient: address,
+    ) {
+        let proposal_id = sui_dao::proposal::auth_proposal_id(&auth);
+
+        // Verify auth matches treasury
+        sui_dao::proposal::consume_auth(auth, object::id(treasury));
+
+        let nft_type = std::type_name::with_original_ids<NFT>().into_string();
+        let key = NFTKey { nft_type, index };
+
+        // Verify NFT exists
+        assert!(dof::exists_with_type<NFTKey, NFT>(&treasury.id, key), errors::insufficient_treasury_balance());
+
+        // Remove and transfer NFT
+        let nft: NFT = dof::remove(&mut treasury.id, key);
+        let nft_id = object::id(&nft);
+
+        events::emit_treasury_nft_withdrawal(
+            object::id(treasury),
+            nft_type,
+            nft_id,
+            recipient,
+            proposal_id,
+        );
+
+        transfer::public_transfer(nft, recipient);
+    }
+
+    /// Get the latest NFT of a type and withdraw it (convenience function)
+    /// Withdraws the most recently deposited NFT of the given type
+    public fun withdraw_latest_nft<NFT: key + store>(
+        treasury: &mut Treasury,
+        auth: DAOAuth,
+        recipient: address,
+    ) {
+        let nft_type = std::type_name::with_original_ids<NFT>().into_string();
+
+        // Get current count
+        assert!(treasury.nft_counters.contains(nft_type), errors::insufficient_treasury_balance());
+        let counter: &u64 = treasury.nft_counters.borrow(nft_type);
+        assert!(*counter > 0, errors::insufficient_treasury_balance());
+
+        // Withdraw the latest (index = counter - 1)
+        let latest_index = *counter - 1;
+        withdraw_nft<NFT>(treasury, auth, latest_index, recipient);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // VIEW FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════════
 
@@ -191,6 +297,28 @@ module sui_dao::treasury {
         treasury.token_balances.contains(token_type)
     }
 
+    /// Get the count of NFTs of a specific type in the treasury
+    public fun nft_count<NFT: key + store>(treasury: &Treasury): u64 {
+        let nft_type = std::type_name::with_original_ids<NFT>().into_string();
+        if (treasury.nft_counters.contains(nft_type)) {
+            *treasury.nft_counters.borrow(nft_type)
+        } else {
+            0
+        }
+    }
+
+    /// Check if treasury has any NFTs of a specific type
+    public fun has_nft<NFT: key + store>(treasury: &Treasury): bool {
+        nft_count<NFT>(treasury) > 0
+    }
+
+    /// Check if a specific NFT exists at the given index
+    public fun has_nft_at_index<NFT: key + store>(treasury: &Treasury, index: u64): bool {
+        let nft_type = std::type_name::with_original_ids<NFT>().into_string();
+        let key = NFTKey { nft_type, index };
+        dof::exists_with_type<NFTKey, NFT>(&treasury.id, key)
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // TEST HELPERS
     // ═══════════════════════════════════════════════════════════════════════
@@ -205,20 +333,29 @@ module sui_dao::treasury {
             governance_id,
             sui_balance: balance::zero(),
             token_balances: bag::new(ctx),
+            nft_counters: bag::new(ctx),
         }
     }
 
     #[test_only]
-    public fun destroy_treasury_for_testing(treasury: Treasury) {
+    public fun destroy_treasury_for_testing(mut treasury: Treasury) {
+        // Clean up NFT counters if any
+        let nft_type = std::type_name::with_original_ids<TestNFT>().into_string();
+        if (treasury.nft_counters.contains(nft_type)) {
+            let _: u64 = treasury.nft_counters.remove(nft_type);
+        };
+
         let Treasury {
             id,
             governance_id: _,
             sui_balance,
             token_balances,
+            nft_counters,
         } = treasury;
         object::delete(id);
         balance::destroy_for_testing(sui_balance);
         token_balances.destroy_empty();
+        nft_counters.destroy_empty();
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -281,6 +418,100 @@ module sui_dao::treasury {
         deposit_sui(&mut treasury, coin3, &ctx);
 
         assert!(sui_balance(&treasury) == 600, 0);
+
+        destroy_treasury_for_testing(treasury);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // NFT TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test_only]
+    public struct TestNFT has key, store {
+        id: UID,
+        value: u64,
+    }
+
+    #[test_only]
+    public fun create_test_nft(value: u64, ctx: &mut TxContext): TestNFT {
+        TestNFT {
+            id: object::new(ctx),
+            value,
+        }
+    }
+
+    #[test_only]
+    public fun destroy_test_nft(nft: TestNFT) {
+        let TestNFT { id, value: _ } = nft;
+        object::delete(id);
+    }
+
+    #[test_only]
+    /// Remove an NFT from treasury without DAOAuth (for testing only)
+    public fun remove_nft_for_testing<NFT: key + store>(
+        treasury: &mut Treasury,
+        index: u64,
+    ): NFT {
+        let nft_type = std::type_name::with_original_ids<NFT>().into_string();
+        let key = NFTKey { nft_type, index };
+        dof::remove(&mut treasury.id, key)
+    }
+
+    #[test]
+    fun test_deposit_nft() {
+        let mut ctx = tx_context::dummy();
+        let governance_id = object::id_from_address(@0x123);
+
+        let mut treasury = create_treasury_for_testing(governance_id, &mut ctx);
+
+        assert!(nft_count<TestNFT>(&treasury) == 0, 0);
+        assert!(!has_nft<TestNFT>(&treasury), 1);
+
+        // Deposit NFT
+        let nft = create_test_nft(100, &mut ctx);
+        deposit_nft(&mut treasury, nft, &ctx);
+
+        assert!(nft_count<TestNFT>(&treasury) == 1, 2);
+        assert!(has_nft<TestNFT>(&treasury), 3);
+        assert!(has_nft_at_index<TestNFT>(&treasury, 0), 4);
+
+        // Cleanup - remove NFT for testing
+        let nft = remove_nft_for_testing<TestNFT>(&mut treasury, 0);
+        destroy_test_nft(nft);
+
+        destroy_treasury_for_testing(treasury);
+    }
+
+    #[test]
+    fun test_deposit_multiple_nfts() {
+        let mut ctx = tx_context::dummy();
+        let governance_id = object::id_from_address(@0x123);
+
+        let mut treasury = create_treasury_for_testing(governance_id, &mut ctx);
+
+        // Deposit multiple NFTs
+        let nft1 = create_test_nft(1, &mut ctx);
+        let nft2 = create_test_nft(2, &mut ctx);
+        let nft3 = create_test_nft(3, &mut ctx);
+
+        deposit_nft(&mut treasury, nft1, &ctx);
+        deposit_nft(&mut treasury, nft2, &ctx);
+        deposit_nft(&mut treasury, nft3, &ctx);
+
+        assert!(nft_count<TestNFT>(&treasury) == 3, 0);
+        assert!(has_nft_at_index<TestNFT>(&treasury, 0), 1);
+        assert!(has_nft_at_index<TestNFT>(&treasury, 1), 2);
+        assert!(has_nft_at_index<TestNFT>(&treasury, 2), 3);
+        assert!(!has_nft_at_index<TestNFT>(&treasury, 3), 4);
+
+        // Cleanup - remove NFTs for testing (LIFO order)
+        let nft3 = remove_nft_for_testing<TestNFT>(&mut treasury, 2);
+        let nft2 = remove_nft_for_testing<TestNFT>(&mut treasury, 1);
+        let nft1 = remove_nft_for_testing<TestNFT>(&mut treasury, 0);
+
+        destroy_test_nft(nft1);
+        destroy_test_nft(nft2);
+        destroy_test_nft(nft3);
 
         destroy_treasury_for_testing(treasury);
     }

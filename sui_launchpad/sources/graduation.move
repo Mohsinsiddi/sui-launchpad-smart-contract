@@ -118,6 +118,27 @@ module sui_launchpad::graduation {
         reward_type: u8,
     }
 
+    /// Configuration for DAO creation at graduation
+    /// Passed via PendingGraduation to PTB for DAO setup
+    public struct DAOConfig has copy, drop, store {
+        /// Whether DAO is enabled for this graduation
+        enabled: bool,
+        /// Quorum required for proposals to pass (in bps)
+        quorum_bps: u64,
+        /// Delay before voting starts (in ms)
+        voting_delay_ms: u64,
+        /// Duration of voting period (in ms)
+        voting_period_ms: u64,
+        /// Delay after voting before execution (in ms)
+        timelock_delay_ms: u64,
+        /// Minimum voting power to create proposal (in bps)
+        proposal_threshold_bps: u64,
+        /// Whether council is enabled
+        council_enabled: bool,
+        /// Who receives the DAOAdminCap (0=creator, 1=dao_treasury, 2=platform)
+        admin_destination: u8,
+    }
+
     /// Pending graduation - hot potato that must be consumed
     /// DEX adapter takes this and creates liquidity pool
     public struct PendingGraduation<phantom T> {
@@ -132,6 +153,8 @@ module sui_launchpad::graduation {
         // Staking integration
         staking_balance: Balance<T>,
         staking_config: StakingConfig,
+        // DAO integration
+        dao_config: DAOConfig,
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -252,6 +275,18 @@ module sui_launchpad::graduation {
             reward_type: config::staking_reward_type(config),
         };
 
+        // Build DAO config from LaunchpadConfig
+        let dao_config = DAOConfig {
+            enabled: config::dao_enabled(config),
+            quorum_bps: config::dao_quorum_bps(config),
+            voting_delay_ms: config::dao_voting_delay_ms(config),
+            voting_period_ms: config::dao_voting_period_ms(config),
+            timelock_delay_ms: config::dao_timelock_delay_ms(config),
+            proposal_threshold_bps: config::dao_proposal_threshold_bps(config),
+            council_enabled: config::dao_council_enabled(config),
+            admin_destination: config::dao_admin_destination(config),
+        };
+
         // Build LP distribution config for DEX adapter
         // Distribution: Creator (vested) + Protocol (direct) + DAO (remainder)
         let lp_distribution = LPDistributionConfig {
@@ -284,6 +319,7 @@ module sui_launchpad::graduation {
             lp_distribution,
             staking_balance,
             staking_config,
+            dao_config,
         }
     }
 
@@ -314,6 +350,7 @@ module sui_launchpad::graduation {
             lp_distribution,
             staking_balance,
             staking_config: _,
+            dao_config: _,
         } = pending;
 
         let sui_amount = balance::value(&sui_balance);
@@ -394,6 +431,7 @@ module sui_launchpad::graduation {
             lp_distribution,
             staking_balance,
             staking_config: _,
+            dao_config: _,
         } = pending;
 
         let timestamp = clock.timestamp_ms();
@@ -574,6 +612,30 @@ module sui_launchpad::graduation {
     public fun staking_config_reward_type(c: &StakingConfig): u8 { c.reward_type }
 
     // ═══════════════════════════════════════════════════════════════════════
+    // DAO CONFIG ACCESSORS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Get the DAO config from PendingGraduation
+    public fun pending_dao_config<T>(pending: &PendingGraduation<T>): &DAOConfig {
+        &pending.dao_config
+    }
+
+    /// Check if DAO is enabled for this graduation
+    public fun pending_dao_enabled<T>(pending: &PendingGraduation<T>): bool {
+        pending.dao_config.enabled
+    }
+
+    // DAOConfig field accessors
+    public fun dao_config_enabled(c: &DAOConfig): bool { c.enabled }
+    public fun dao_config_quorum_bps(c: &DAOConfig): u64 { c.quorum_bps }
+    public fun dao_config_voting_delay_ms(c: &DAOConfig): u64 { c.voting_delay_ms }
+    public fun dao_config_voting_period_ms(c: &DAOConfig): u64 { c.voting_period_ms }
+    public fun dao_config_timelock_delay_ms(c: &DAOConfig): u64 { c.timelock_delay_ms }
+    public fun dao_config_proposal_threshold_bps(c: &DAOConfig): u64 { c.proposal_threshold_bps }
+    public fun dao_config_council_enabled(c: &DAOConfig): bool { c.council_enabled }
+    public fun dao_config_admin_destination(c: &DAOConfig): u8 { c.admin_destination }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // LP/POSITION SPLITTING (PTB calls this, then handles vesting separately)
     // Distribution: Creator (vested) + Protocol (direct) + DAO (remainder)
     // ═══════════════════════════════════════════════════════════════════════
@@ -723,6 +785,7 @@ module sui_launchpad::graduation {
             lp_distribution: _,
             staking_balance,
             staking_config: _,
+            dao_config: _,
         } = pending;
 
         balance::destroy_for_testing(sui_balance);

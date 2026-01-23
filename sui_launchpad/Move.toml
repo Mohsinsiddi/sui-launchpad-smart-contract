@@ -10,6 +10,7 @@ edition = "2024"
 # ═══════════════════════════════════════════════════════════════════════════════
 sui_vesting = { local = "../sui_vesting" }
 sui_staking = { local = "../sui_staking" }
+sui_dao = { local = "../sui_dao" }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DEX DEPENDENCIES FOR GRADUATION

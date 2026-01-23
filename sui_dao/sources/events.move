@@ -292,6 +292,21 @@ module sui_dao::events {
         proposal_id: ID,
     }
 
+    public struct TreasuryNFTDeposit has copy, drop {
+        treasury_id: ID,
+        nft_type: std::ascii::String,
+        nft_id: ID,
+        depositor: address,
+    }
+
+    public struct TreasuryNFTWithdrawal has copy, drop {
+        treasury_id: ID,
+        nft_type: std::ascii::String,
+        nft_id: ID,
+        recipient: address,
+        proposal_id: ID,
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // NFT VAULT EVENTS
     // ═══════════════════════════════════════════════════════════════════════
@@ -832,6 +847,36 @@ module sui_dao::events {
             treasury_id,
             token_type,
             amount,
+            recipient,
+            proposal_id,
+        });
+    }
+
+    public(package) fun emit_treasury_nft_deposit(
+        treasury_id: ID,
+        nft_type: std::ascii::String,
+        nft_id: ID,
+        depositor: address,
+    ) {
+        event::emit(TreasuryNFTDeposit {
+            treasury_id,
+            nft_type,
+            nft_id,
+            depositor,
+        });
+    }
+
+    public(package) fun emit_treasury_nft_withdrawal(
+        treasury_id: ID,
+        nft_type: std::ascii::String,
+        nft_id: ID,
+        recipient: address,
+        proposal_id: ID,
+    ) {
+        event::emit(TreasuryNFTWithdrawal {
+            treasury_id,
+            nft_type,
+            nft_id,
             recipient,
             proposal_id,
         });

@@ -88,6 +88,54 @@ module sui_launchpad::config {
     const STAKING_REWARD_CUSTOM: u8 = 2;       // Custom reward token (requires separate setup)
 
     // ═══════════════════════════════════════════════════════════════════════
+    // DAO INTEGRATION CONSTANTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Default DAO quorum (4% = 400 bps)
+    const DEFAULT_DAO_QUORUM_BPS: u64 = 400;
+
+    /// Default voting delay (1 day in ms)
+    const DEFAULT_DAO_VOTING_DELAY_MS: u64 = 86_400_000;
+
+    /// Default voting period (3 days in ms)
+    const DEFAULT_DAO_VOTING_PERIOD_MS: u64 = 259_200_000;
+
+    /// Default timelock delay (2 days in ms)
+    const DEFAULT_DAO_TIMELOCK_DELAY_MS: u64 = 172_800_000;
+
+    /// Default proposal threshold (1% = 100 bps)
+    const DEFAULT_DAO_PROPOSAL_THRESHOLD_BPS: u64 = 100;
+
+    /// Minimum voting delay (1 hour in ms)
+    const MIN_DAO_VOTING_DELAY_MS: u64 = 3_600_000;
+
+    /// Maximum voting delay (7 days in ms)
+    const MAX_DAO_VOTING_DELAY_MS: u64 = 604_800_000;
+
+    /// Minimum voting period (1 day in ms)
+    const MIN_DAO_VOTING_PERIOD_MS: u64 = 86_400_000;
+
+    /// Maximum voting period (14 days in ms)
+    const MAX_DAO_VOTING_PERIOD_MS: u64 = 1_209_600_000;
+
+    /// Minimum timelock delay (1 hour in ms)
+    const MIN_DAO_TIMELOCK_DELAY_MS: u64 = 3_600_000;
+
+    /// Maximum timelock delay (14 days in ms)
+    const MAX_DAO_TIMELOCK_DELAY_MS: u64 = 1_209_600_000;
+
+    /// Maximum quorum (50% = 5000 bps)
+    const MAX_DAO_QUORUM_BPS: u64 = 5000;
+
+    /// Maximum proposal threshold (10% = 1000 bps)
+    const MAX_DAO_PROPOSAL_THRESHOLD_BPS: u64 = 1000;
+
+    // DAO admin destination types (same as staking)
+    const DAO_ADMIN_DEST_CREATOR: u8 = 0;     // Creator manages DAO
+    const DAO_ADMIN_DEST_DAO_TREASURY: u8 = 1; // DAO treasury (community-controlled)
+    const DAO_ADMIN_DEST_PLATFORM: u8 = 2;    // Platform manages DAO
+
+    // ═══════════════════════════════════════════════════════════════════════
     // ERRORS
     // ═══════════════════════════════════════════════════════════════════════
 
@@ -107,6 +155,12 @@ module sui_launchpad::config {
     const EInvalidStakingAdminDest: u64 = 113;
     const EInvalidStakingRewardType: u64 = 114;
     const EStakingFeeTooHigh: u64 = 115;
+    const EInvalidDAOQuorum: u64 = 116;
+    const EInvalidDAOVotingDelay: u64 = 117;
+    const EInvalidDAOVotingPeriod: u64 = 118;
+    const EInvalidDAOTimelockDelay: u64 = 119;
+    const EInvalidDAOProposalThreshold: u64 = 120;
+    const EInvalidDAOAdminDest: u64 = 121;
 
     // ═══════════════════════════════════════════════════════════════════════
     // CONFIG STRUCT
@@ -214,6 +268,28 @@ module sui_launchpad::config {
         staking_admin_destination: u8,
         /// Type of reward token (0=same_token, 1=sui, 2=custom)
         staking_reward_type: u8,
+
+        // ═══════════════════════════════════════════════════════════════════
+        // DAO INTEGRATION SETTINGS
+        // At graduation, a DAO is created for the token's governance
+        // ═══════════════════════════════════════════════════════════════════
+
+        /// Whether DAO creation is enabled at graduation
+        dao_enabled: bool,
+        /// Quorum required for proposals to pass (in bps of voting supply)
+        dao_quorum_bps: u64,
+        /// Delay before voting starts after proposal creation (in ms)
+        dao_voting_delay_ms: u64,
+        /// Duration of the voting period (in ms)
+        dao_voting_period_ms: u64,
+        /// Delay after voting ends before execution (in ms)
+        dao_timelock_delay_ms: u64,
+        /// Minimum voting power to create a proposal (in bps of total supply)
+        dao_proposal_threshold_bps: u64,
+        /// Whether council is enabled at DAO creation
+        dao_council_enabled: bool,
+        /// Who receives the DAOAdminCap (0=creator, 1=dao_treasury, 2=platform)
+        dao_admin_destination: u8,
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -319,6 +395,18 @@ module sui_launchpad::config {
             staking_unstake_fee_bps: 0,                         // No unstake fee
             staking_admin_destination: STAKING_ADMIN_DEST_CREATOR, // Creator manages pool
             staking_reward_type: STAKING_REWARD_SAME_TOKEN,     // Same token rewards
+
+            // DAO INTEGRATION DEFAULTS
+            // ═══════════════════════════════════════════════════════════════
+
+            dao_enabled: true,                                      // Enabled by default
+            dao_quorum_bps: DEFAULT_DAO_QUORUM_BPS,                  // 4% quorum
+            dao_voting_delay_ms: DEFAULT_DAO_VOTING_DELAY_MS,        // 1 day
+            dao_voting_period_ms: DEFAULT_DAO_VOTING_PERIOD_MS,      // 3 days
+            dao_timelock_delay_ms: DEFAULT_DAO_TIMELOCK_DELAY_MS,    // 2 days
+            dao_proposal_threshold_bps: DEFAULT_DAO_PROPOSAL_THRESHOLD_BPS, // 1%
+            dao_council_enabled: false,                              // Disabled by default
+            dao_admin_destination: DAO_ADMIN_DEST_DAO_TREASURY,     // DAO treasury manages DAO
         };
 
         event::emit(ConfigCreated {
@@ -704,6 +792,110 @@ module sui_launchpad::config {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
+    // DAO INTEGRATION ADMIN SETTERS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Enable/disable DAO creation at graduation
+    public fun set_dao_enabled(
+        _admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        enabled: bool,
+    ) {
+        config.dao_enabled = enabled;
+        event::emit(ConfigUpdated {
+            field: b"dao_enabled",
+            old_value: if (config.dao_enabled) { 1 } else { 0 },
+            new_value: if (enabled) { 1 } else { 0 }
+        });
+    }
+
+    /// Set DAO quorum (in bps, max 50%)
+    public fun set_dao_quorum_bps(
+        _admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        quorum_bps: u64,
+    ) {
+        assert!(quorum_bps > 0 && quorum_bps <= MAX_DAO_QUORUM_BPS, EInvalidDAOQuorum);
+        let old = config.dao_quorum_bps;
+        config.dao_quorum_bps = quorum_bps;
+        event::emit(ConfigUpdated { field: b"dao_quorum_bps", old_value: old, new_value: quorum_bps });
+    }
+
+    /// Set DAO voting delay (time before voting starts after proposal creation)
+    public fun set_dao_voting_delay_ms(
+        _admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        delay_ms: u64,
+    ) {
+        assert!(delay_ms >= MIN_DAO_VOTING_DELAY_MS && delay_ms <= MAX_DAO_VOTING_DELAY_MS, EInvalidDAOVotingDelay);
+        let old = config.dao_voting_delay_ms;
+        config.dao_voting_delay_ms = delay_ms;
+        event::emit(ConfigUpdated { field: b"dao_voting_delay_ms", old_value: old, new_value: delay_ms });
+    }
+
+    /// Set DAO voting period (how long voting is open)
+    public fun set_dao_voting_period_ms(
+        _admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        period_ms: u64,
+    ) {
+        assert!(period_ms >= MIN_DAO_VOTING_PERIOD_MS && period_ms <= MAX_DAO_VOTING_PERIOD_MS, EInvalidDAOVotingPeriod);
+        let old = config.dao_voting_period_ms;
+        config.dao_voting_period_ms = period_ms;
+        event::emit(ConfigUpdated { field: b"dao_voting_period_ms", old_value: old, new_value: period_ms });
+    }
+
+    /// Set DAO timelock delay (time after voting before execution)
+    public fun set_dao_timelock_delay_ms(
+        _admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        delay_ms: u64,
+    ) {
+        assert!(delay_ms >= MIN_DAO_TIMELOCK_DELAY_MS && delay_ms <= MAX_DAO_TIMELOCK_DELAY_MS, EInvalidDAOTimelockDelay);
+        let old = config.dao_timelock_delay_ms;
+        config.dao_timelock_delay_ms = delay_ms;
+        event::emit(ConfigUpdated { field: b"dao_timelock_delay_ms", old_value: old, new_value: delay_ms });
+    }
+
+    /// Set DAO proposal threshold (minimum voting power to create proposal, in bps)
+    public fun set_dao_proposal_threshold_bps(
+        _admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        threshold_bps: u64,
+    ) {
+        assert!(threshold_bps > 0 && threshold_bps <= MAX_DAO_PROPOSAL_THRESHOLD_BPS, EInvalidDAOProposalThreshold);
+        let old = config.dao_proposal_threshold_bps;
+        config.dao_proposal_threshold_bps = threshold_bps;
+        event::emit(ConfigUpdated { field: b"dao_proposal_threshold_bps", old_value: old, new_value: threshold_bps });
+    }
+
+    /// Enable/disable council at DAO creation
+    public fun set_dao_council_enabled(
+        _admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        enabled: bool,
+    ) {
+        config.dao_council_enabled = enabled;
+        event::emit(ConfigUpdated {
+            field: b"dao_council_enabled",
+            old_value: if (config.dao_council_enabled) { 1 } else { 0 },
+            new_value: if (enabled) { 1 } else { 0 }
+        });
+    }
+
+    /// Set DAO admin destination (0=creator, 1=dao_treasury, 2=platform)
+    public fun set_dao_admin_destination(
+        _admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        destination: u8,
+    ) {
+        assert!(destination <= DAO_ADMIN_DEST_PLATFORM, EInvalidDAOAdminDest);
+        let old = config.dao_admin_destination;
+        config.dao_admin_destination = destination;
+        event::emit(ConfigUpdated { field: b"dao_admin_destination", old_value: old as u64, new_value: destination as u64 });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // DEPRECATED - Use dao_* instead of community_* (kept for compatibility)
     // ═══════════════════════════════════════════════════════════════════════
 
@@ -779,6 +971,16 @@ module sui_launchpad::config {
     public fun staking_admin_destination(config: &LaunchpadConfig): u8 { config.staking_admin_destination }
     public fun staking_reward_type(config: &LaunchpadConfig): u8 { config.staking_reward_type }
 
+    // DAO Integration getters
+    public fun dao_enabled(config: &LaunchpadConfig): bool { config.dao_enabled }
+    public fun dao_quorum_bps(config: &LaunchpadConfig): u64 { config.dao_quorum_bps }
+    public fun dao_voting_delay_ms(config: &LaunchpadConfig): u64 { config.dao_voting_delay_ms }
+    public fun dao_voting_period_ms(config: &LaunchpadConfig): u64 { config.dao_voting_period_ms }
+    public fun dao_timelock_delay_ms(config: &LaunchpadConfig): u64 { config.dao_timelock_delay_ms }
+    public fun dao_proposal_threshold_bps(config: &LaunchpadConfig): u64 { config.dao_proposal_threshold_bps }
+    public fun dao_council_enabled(config: &LaunchpadConfig): bool { config.dao_council_enabled }
+    public fun dao_admin_destination(config: &LaunchpadConfig): u8 { config.dao_admin_destination }
+
     // ═══════════════════════════════════════════════════════════════════════
     // VALIDATION HELPERS
     // ═══════════════════════════════════════════════════════════════════════
@@ -846,4 +1048,30 @@ module sui_launchpad::config {
     public fun min_staking_duration_ms(): u64 { MIN_STAKING_DURATION_MS }
     public fun max_min_stake_duration_ms(): u64 { MAX_MIN_STAKE_DURATION_MS }
     public fun max_stake_fee_bps(): u64 { MAX_STAKE_FEE_BPS }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // DAO INTEGRATION CONSTANTS (public getters)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // DAO admin destination constants
+    public fun dao_admin_dest_creator(): u8 { DAO_ADMIN_DEST_CREATOR }
+    public fun dao_admin_dest_dao_treasury(): u8 { DAO_ADMIN_DEST_DAO_TREASURY }
+    public fun dao_admin_dest_platform(): u8 { DAO_ADMIN_DEST_PLATFORM }
+
+    // DAO limits
+    public fun max_dao_quorum_bps(): u64 { MAX_DAO_QUORUM_BPS }
+    public fun max_dao_proposal_threshold_bps(): u64 { MAX_DAO_PROPOSAL_THRESHOLD_BPS }
+    public fun min_dao_voting_delay_ms(): u64 { MIN_DAO_VOTING_DELAY_MS }
+    public fun max_dao_voting_delay_ms(): u64 { MAX_DAO_VOTING_DELAY_MS }
+    public fun min_dao_voting_period_ms(): u64 { MIN_DAO_VOTING_PERIOD_MS }
+    public fun max_dao_voting_period_ms(): u64 { MAX_DAO_VOTING_PERIOD_MS }
+    public fun min_dao_timelock_delay_ms(): u64 { MIN_DAO_TIMELOCK_DELAY_MS }
+    public fun max_dao_timelock_delay_ms(): u64 { MAX_DAO_TIMELOCK_DELAY_MS }
+
+    // DAO defaults
+    public fun default_dao_quorum_bps(): u64 { DEFAULT_DAO_QUORUM_BPS }
+    public fun default_dao_voting_delay_ms(): u64 { DEFAULT_DAO_VOTING_DELAY_MS }
+    public fun default_dao_voting_period_ms(): u64 { DEFAULT_DAO_VOTING_PERIOD_MS }
+    public fun default_dao_timelock_delay_ms(): u64 { DEFAULT_DAO_TIMELOCK_DELAY_MS }
+    public fun default_dao_proposal_threshold_bps(): u64 { DEFAULT_DAO_PROPOSAL_THRESHOLD_BPS }
 }
