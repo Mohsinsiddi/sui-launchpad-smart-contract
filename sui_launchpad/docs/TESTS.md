@@ -2,8 +2,8 @@
 
 ## Overview
 
-**Total Tests: 138**
-**Status: All Passing**
+**Total Tests: 201**
+**Status: All Passing ✅**
 **Last Updated: January 2026**
 
 ---
@@ -15,11 +15,16 @@
 | `bonding_curve_tests` | 46 | Core trading, fees, pool safety |
 | `config_tests` | 35 | Configuration, admin controls, limits |
 | `math_tests` | 26 | Mathematical functions, precision |
+| `dex_adapter_tests` | 32 | DEX helper functions, sqrt price, slippage |
 | `launchpad_tests` | 14 | Entry points, user flows |
 | `graduation_tests` | 14 | Graduation mechanics |
+| `suidex_integration_tests` | 5 | SuiDex LP token creation, PTB flow |
+| `cetus_integration_tests` | 2 | Cetus Position NFT creation |
+| `flowx_integration_tests` | 2 | FlowX Position NFT creation |
 | `registry_tests` | 8 | Pool registry |
 | `access` | 2 | Admin/operator capabilities |
 | `math` (inline) | 4 | Core math functions |
+| Other inline tests | 11 | DEX adapter inline tests |
 
 ---
 
@@ -370,6 +375,43 @@ sui move test -v
 
 ---
 
+## DEX Integration Tests
+
+### SuiDex Tests (`suidex_integration_tests.move`)
+
+| Test | Status | Description |
+|------|--------|-------------|
+| `test_suidex_graduation_creates_lp_tokens` | ✅ PASS | LP tokens minted on graduation |
+| `test_suidex_lp_amount_proportional_to_liquidity` | ✅ PASS | LP amount matches input liquidity |
+| `test_suidex_pair_reserves_match_input` | ✅ PASS | Pair reserves equal input amounts |
+| `test_suidex_ptb_atomic_graduation` | ✅ PASS | Full PTB flow: initiate → extract → add_liquidity → complete |
+| `test_suidex_ptb_atomic_failure_reverts_all` | ✅ PASS | Failed graduation doesn't create partial state |
+
+### Cetus Tests (`cetus_integration_tests.move`)
+
+| Test | Status | Description |
+|------|--------|-------------|
+| `test_cetus_graduation_creates_position_nft` | ✅ PASS | Position NFT created with liquidity > 0 |
+| `test_cetus_position_has_correct_tick_range` | ✅ PASS | Tick range [0, 2000] verified |
+
+### FlowX Tests (`flowx_integration_tests.move`)
+
+| Test | Status | Description |
+|------|--------|-------------|
+| `test_flowx_graduation_creates_position_nft` | ✅ PASS | Position NFT created, pool_id valid |
+| `test_flowx_position_has_correct_tick_range` | ✅ PASS | Tick range [-60000, +60000] verified |
+
+### DEX Adapter Tests (`dex_adapter_tests.move`)
+
+| Test | Status | Description |
+|------|--------|-------------|
+| `test_suidex_*` | ✅ 10 PASS | SuiDex helper functions (slippage, min amounts) |
+| `test_cetus_*` | ✅ 6 PASS | Cetus helper functions (sqrt price, ticks) |
+| `test_flowx_*` | ✅ 10 PASS | FlowX helper functions (sqrt price, ticks, fee) |
+| `test_turbos_*` | ✅ 6 PASS | Turbos helper functions |
+
+---
+
 ## Test Coverage Summary
 
 | Category | Tests | Coverage |
@@ -386,5 +428,7 @@ sui move test -v
 | Math Functions | 26 | ✅ Complete |
 | Graduation | 14 | ✅ Complete |
 | Registry | 8 | ✅ Complete |
+| DEX Adapters | 32 | ✅ Complete |
+| DEX Integration | 9 | ✅ Complete |
 
-**Total: 138 tests, 100% passing**
+**Total: 201 tests, 100% passing**
