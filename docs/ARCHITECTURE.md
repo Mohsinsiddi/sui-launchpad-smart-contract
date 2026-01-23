@@ -169,7 +169,7 @@ PHASE 4: POST-GRADUATION (Token is live on DEX)
 ```
 your-org/
 │
-├── sui-launchpad/               # PRODUCT 1: Token Launchpad
+├── sui-launchpad/               # PRODUCT 1: Token Launchpad (219 tests)
 │   ├── Move.toml
 │   └── sources/
 │       ├── core/                # Self-contained utilities
@@ -177,25 +177,25 @@ your-org/
 │       │   ├── access.move
 │       │   └── errors.move
 │       ├── registry.move        # Token registry
-│       ├── config.move          # Platform config
+│       ├── config.move          # Platform config + LP distribution
 │       ├── bonding_curve.move   # Trading pool
-│       ├── graduation.move      # DEX migration
-│       ├── vesting.move         # PLACEHOLDER (see sui_vesting)
+│       ├── graduation.move      # DEX migration + LP splits
+│       ├── vesting.move         # PTB flow docs + sui_vesting integration
 │       ├── dex_adapters/        # DEX integrations
-│       │   ├── cetus.move
-│       │   ├── turbos.move
-│       │   ├── flowx.move
-│       │   └── suidex.move
+│       │   ├── cetus.move       # CLMM + LP distribution
+│       │   ├── turbos.move      # CLMM + LP distribution
+│       │   ├── flowx.move       # CLMM + LP distribution
+│       │   └── suidex.move      # AMM + LP distribution
 │       └── events.move
 │
-├── sui-vesting/                 # STANDALONE: Vesting Service
+├── sui-vesting/                 # STANDALONE: Vesting Service (65 tests)
 │   ├── Move.toml
 │   └── sources/
-│       ├── vesting.move         # Core vesting logic
-│       ├── linear.move          # Linear vesting
-│       ├── milestone.move       # Milestone-based (future)
-│       ├── batch.move           # Batch operations
-│       ├── admin.move           # Admin functions
+│       ├── core/
+│       │   ├── access.move      # AdminCap, CreatorCap
+│       │   └── errors.move      # Error codes
+│       ├── vesting.move         # Coin<T> vesting (cliff + linear)
+│       ├── nft_vesting.move     # NFT/Position vesting (CLMM)
 │       └── events.move          # Event definitions
 │
 ├── sui-staking/                 # PRODUCT 2: Staking Service
@@ -354,17 +354,18 @@ LAYER 5: CUSTOM TX SECURITY (DAO/Multisig)
 
 ## Development Order
 
-| Order | Product | Estimated LOC | Dependencies |
-|-------|---------|---------------|--------------|
-| 1 | sui-launchpad | ~1,800 | None (self-contained) |
-| 2 | sui-vesting | ~760 | None (standalone service) |
-| 3 | sui-staking | ~940 | Optional: sui-vesting |
-| 4 | sui-dao | ~1,510 | Optional: sui-vesting, staking |
-| 5 | sui-multisig | ~820 | None |
-| **Total** | | **~5,830** | |
+| Order | Product | Actual LOC | Tests | Status |
+|-------|---------|------------|-------|--------|
+| 1 | sui-launchpad | ~2,500 | 219 | ✅ DONE |
+| 2 | sui-vesting | ~1,350 | 65 | ✅ DONE |
+| 3 | sui-staking | ~2,170 | 97 | ✅ DONE |
+| 4 | sui-dao | ~5,200 | 58 | ✅ DONE |
+| 5 | sui-multisig | ~1,976 | 33 | ✅ DONE |
+| **Total** | | **~13,200** | **472** | ✅ |
 
-> **Note:** sui-vesting is a reusable standalone package that can be integrated by
-> Launchpad, Staking, DAO, or any external project. See [VESTING.md](./VESTING.md).
+> **Note:** All packages are complete with comprehensive test coverage.
+> sui-vesting is fully integrated with sui-launchpad graduation flow.
+> See [VESTING.md](./VESTING.md) and [STATUS.md](./STATUS.md) for details.
 
 ---
 

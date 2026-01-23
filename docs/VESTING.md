@@ -2,7 +2,7 @@
 
 Claim-based vesting module for Sui blockchain. Supports vesting for both fungible tokens (`Coin<T>`) and NFTs (CLMM positions).
 
-**Status:** IMPLEMENTED - 51 tests passing
+**Status:** COMPLETE - 65 tests passing (integrated with Launchpad)
 
 ---
 
@@ -10,8 +10,45 @@ Claim-based vesting module for Sui blockchain. Supports vesting for both fungibl
 
 The `sui_vesting` package provides a flexible vesting system that supports:
 
-- **Fungible Token Vesting** (`vesting.move`): For any `Coin<T>` type
-- **NFT Vesting** (`nft_vesting.move`): For NFTs and Position objects with `key + store` abilities
+- **Fungible Token Vesting** (`vesting.move`): For any `Coin<T>` type (LP tokens, reward tokens, etc.)
+- **NFT Vesting** (`nft_vesting.move`): For NFTs and Position objects with `key + store` abilities (CLMM positions)
+
+---
+
+## Integration with Launchpad
+
+The vesting package is fully integrated with `sui_launchpad` for graduation LP distribution:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    GRADUATION LP DISTRIBUTION                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+                         DEX LP TOKENS (100%)
+                              │
+    ┌─────────────────────────┼─────────────────────────┐
+    │                         │                         │
+    ▼                         ▼                         ▼
+┌────────────┐         ┌────────────┐           ┌────────────┐
+│  CREATOR   │         │  PROTOCOL  │           │    DAO     │
+│   2.5%     │         │   2.5%     │           │   95%      │
+│  (VESTED)  │         │  (DIRECT)  │           │  (CONFIG)  │
+└─────┬──────┘         └─────┬──────┘           └─────┬──────┘
+      │                      │                        │
+      ▼                      ▼                        ▼
+┌────────────┐         ┌────────────┐           ┌────────────┐
+│sui_vesting │         │  Protocol  │           │ Burn/DAO/  │
+│::vesting:: │         │  Treasury  │           │ Stake/Vest │
+│create_     │         │  (Direct)  │           │ (Config)   │
+│schedule()  │         └────────────┘           └────────────┘
+└────────────┘
+     │
+     ▼
+VestingSchedule<LP>
+  - 6 month cliff
+  - 12 month linear
+  - Non-revocable
+```
 
 ---
 
@@ -27,7 +64,7 @@ The `sui_vesting` package provides a flexible vesting system that supports:
 │   (Reusable)     │
 └────────┬─────────┘
          │
-         │ Can be imported by:
+         │ Imported by:
          │
     ┌────┴────┬────────────┬────────────┬────────────────┐
     │         │            │            │                │
@@ -62,8 +99,9 @@ sui_vesting/
 └── tests/
     ├── test_coin.move         # Test coin for unit tests
     ├── test_nft.move          # Test NFT for unit tests
-    ├── vesting_tests.move     # Coin vesting tests (32 tests)
-    └── nft_vesting_tests.move # NFT vesting tests (19 tests)
+    ├── vesting_tests.move     # Coin vesting tests
+    ├── nft_vesting_tests.move # NFT vesting tests
+    └── strict_vesting_tests.move # Strict integration tests
 ```
 
 ---
@@ -71,13 +109,13 @@ sui_vesting/
 ## Use Cases
 
 ### Fungible Token Vesting
+- **LP Token Vesting** - Creator LP at graduation (primary use case)
 - Team token vesting (cliff + linear)
 - Investor token lockups
-- LP token vesting from AMM DEXes (FlowX, SuiDex)
 - Instant unlocks for airdrops
 
 ### NFT Vesting
-- CLMM Position vesting (Cetus, Turbos)
+- **CLMM Position Vesting** - Cetus/FlowX positions at graduation
 - NFT unlock schedules
 - Any non-fungible asset with `key + store` abilities
 
@@ -117,12 +155,12 @@ else:
     vested = total_amount * elapsed_after_cliff / vesting_duration
     claimable = vested - claimed
 
-Example: 1.2B tokens, 6 month cliff, 12 month vesting
-├── Month 0-6:   0 tokens claimable (cliff)
-├── Month 6:     0 tokens (cliff just ended)
-├── Month 7:     100M tokens (1/12 = 8.33%)
-├── Month 12:    600M tokens (50%)
-├── Month 18:    1.2B tokens (100% vested)
+Example: Creator LP vesting - 6 month cliff, 12 month vesting
+├── Month 0-6:   0 LP claimable (cliff)
+├── Month 6:     0 LP (cliff just ended)
+├── Month 7:     8.33% LP claimable (1/12 of vesting)
+├── Month 12:    50% LP claimable
+├── Month 18:    100% LP claimable (fully vested)
 ```
 
 ### 2. NFT Cliff Vesting
@@ -145,6 +183,10 @@ NFTs cannot be partially vested. The NFT is locked until cliff ends:
 │   NFT locked          │    NFT fully claimable     │
 │   ░░░░░░░░░░░░░░░░░░░│    ████████████████████    │
 └───────────────────────┴────────────────────────────┘
+
+Example: CLMM Position NFT - 6 month cliff
+├── Month 0-6:  Position locked (cannot claim or transfer)
+├── Month 6+:   Position fully claimable
 ```
 
 ---
@@ -230,21 +272,6 @@ public struct NFTVestingSchedule<T: key + store> has key, store {
 }
 ```
 
-### Access Capabilities
-
-```move
-/// Admin capability - can pause platform, pause schedules
-public struct AdminCap has key, store {
-    id: UID,
-}
-
-/// Creator capability - issued to schedule creators for management
-public struct CreatorCap has key, store {
-    id: UID,
-    schedule_id: ID,
-}
-```
-
 ---
 
 ## Core Functions
@@ -278,124 +305,31 @@ public struct CreatorCap has key, store {
 | `set_nft_schedule_paused<T>()` | Pause/unpause schedule (admin only) |
 | `delete_empty_nft_schedule<T>()` | Delete schedule after NFT claimed/revoked |
 
-### View Functions
-
-```move
-// Coin Vesting
-public fun claimable<T>(schedule: &VestingSchedule<T>, clock: &Clock): u64
-public fun vested<T>(schedule: &VestingSchedule<T>, clock: &Clock): u64
-public fun remaining<T>(schedule: &VestingSchedule<T>): u64
-public fun beneficiary<T>(schedule: &VestingSchedule<T>): address
-public fun creator<T>(schedule: &VestingSchedule<T>): address
-public fun total_amount<T>(schedule: &VestingSchedule<T>): u64
-public fun claimed<T>(schedule: &VestingSchedule<T>): u64
-public fun is_revocable<T>(schedule: &VestingSchedule<T>): bool
-public fun is_revoked<T>(schedule: &VestingSchedule<T>): bool
-public fun is_paused<T>(schedule: &VestingSchedule<T>): bool
-
-// NFT Vesting
-public fun is_claimable<T>(schedule: &NFTVestingSchedule<T>, clock: &Clock): bool
-public fun time_until_claimable<T>(schedule: &NFTVestingSchedule<T>, clock: &Clock): u64
-public fun has_nft<T>(schedule: &NFTVestingSchedule<T>): bool
-public fun nft_beneficiary<T>(schedule: &NFTVestingSchedule<T>): address
-public fun nft_is_claimed<T>(schedule: &NFTVestingSchedule<T>): bool
-```
-
 ---
 
-## Events
+## Admin Configurable Parameters
 
-| Event | Module | Trigger |
-|-------|--------|---------|
-| `ScheduleCreated` | vesting | New vesting schedule created |
-| `TokensClaimed` | vesting | Tokens claimed from schedule |
-| `ScheduleRevoked` | vesting | Schedule revoked by creator |
-| `ScheduleCompleted` | vesting | All tokens claimed |
-| `PlatformPauseToggled` | vesting | Platform pause state changed |
-| `SchedulePauseToggled` | vesting | Schedule pause state changed |
-| `NFTScheduleCreated` | nft_vesting | New NFT schedule created |
-| `NFTClaimed` | nft_vesting | NFT claimed from schedule |
-| `NFTScheduleRevoked` | nft_vesting | NFT schedule revoked |
+The launchpad admin can configure vesting parameters:
 
----
+| Parameter | Default | Range | Admin Function |
+|-----------|---------|-------|----------------|
+| `creator_lp_bps` | 250 (2.5%) | 0-3000 (30%) | `set_creator_lp_bps()` |
+| `protocol_lp_bps` | 250 (2.5%) | 0-3000 (30%) | `set_protocol_lp_bps()` |
+| `dao_lp_bps` | 9500 (95%) | AUTO | _(calculated)_ |
+| `creator_lp_cliff_ms` | 6 months | >= min_lock | `set_creator_lp_vesting()` |
+| `creator_lp_vesting_ms` | 12 months | >= 0 | |
+| `dao_lp_destination` | 0 (burn) | 0-3 | `set_dao_lp_destination()` |
+| `dao_lp_cliff_ms` | 0 | >= 0 | `set_dao_lp_vesting()` |
+| `dao_lp_vesting_ms` | 0 | >= 0 | |
 
-## Usage Examples
+### DAO LP Destination Options
 
-### Creating a Team Vesting Schedule
-
-```move
-// 1B tokens, 6 month cliff, 12 month linear vesting
-let tokens = coin::mint<MYTOKEN>(1_000_000_000, ctx);
-let creator_cap = vesting::create_schedule_months<MYTOKEN>(
-    &mut config,
-    tokens,
-    team_member_address,
-    6,    // 6 month cliff
-    12,   // 12 month vesting
-    true, // revocable
-    &clock,
-    ctx,
-);
-// Keep creator_cap to manage the schedule
-```
-
-### Creating LP Position Vesting (CLMM)
-
-```move
-// Vest a Cetus CLMM position for 6 months
-let creator_cap = nft_vesting::create_nft_schedule_months<cetus::Position>(
-    cetus_position,
-    beneficiary_address,
-    6,     // 6 month cliff
-    false, // non-revocable
-    &clock,
-    ctx,
-);
-```
-
-### Creating Instant Unlock
-
-```move
-// Airdrop: tokens claimable immediately
-let tokens = coin::mint<MYTOKEN>(1_000_000, ctx);
-let creator_cap = vesting::create_instant_schedule<MYTOKEN>(
-    &mut config,
-    tokens,
-    recipient_address,
-    &clock,
-    ctx,
-);
-```
-
-### Claiming Tokens (Beneficiary)
-
-```move
-// Beneficiary claims available tokens
-let tokens = vesting::claim<MYTOKEN>(&mut schedule, &clock, ctx);
-transfer::public_transfer(tokens, beneficiary);
-```
-
-### Claiming NFT (Beneficiary)
-
-```move
-// Beneficiary claims NFT after cliff
-let nft = nft_vesting::claim_nft<Position>(&mut schedule, &clock, ctx);
-transfer::public_transfer(nft, beneficiary);
-```
-
-### Revoking a Schedule (Creator)
-
-```move
-// Creator revokes unvested tokens
-let returned_tokens = vesting::revoke<MYTOKEN>(
-    &creator_cap,
-    &mut schedule,
-    &clock,
-    ctx
-);
-// Beneficiary keeps vested portion, creator gets unvested
-transfer::public_transfer(returned_tokens, creator);
-```
+| Value | Constant | Action |
+|-------|----------|--------|
+| 0 | `LP_DEST_BURN` | Burn (transfer to 0x0) |
+| 1 | `LP_DEST_DAO` | Direct to DAO treasury |
+| 2 | `LP_DEST_STAKE` | Send to staking contract |
+| 3 | `LP_DEST_VEST` | Vest to DAO treasury |
 
 ---
 
@@ -433,7 +367,7 @@ transfer::public_transfer(returned_tokens, creator);
 | 502 | `EZeroItems` | Cannot delete non-empty schedule |
 | 503 | `EInvalidBeneficiary` | Invalid beneficiary address |
 | 504 | `EAlreadyRevoked` | Schedule already revoked |
-| 505 | `ENotRevocable` | Schedule is not revocable |
+| 505 | `ENotRevocable` | Schedule is not revocable / NFT claimable |
 | 506 | `ENotBeneficiary` | Caller is not the beneficiary |
 | 507 | `ESchedulePaused` | Schedule is paused |
 | 508 | `ECreatorCapMismatch` | Wrong creator cap |
@@ -456,20 +390,9 @@ transfer::public_transfer(returned_tokens, creator);
 
 ---
 
-## DEX LP Token Support
-
-| DEX | LP Type | Module to Use |
-|-----|---------|---------------|
-| FlowX | `Coin<LP<X,Y>>` | `vesting.move` |
-| SuiDex | `Coin<LP>` | `vesting.move` |
-| Cetus CLMM | `Position` NFT | `nft_vesting.move` |
-| Turbos CLMM | `Position` NFT | `nft_vesting.move` |
-
----
-
 ## Test Coverage
 
-**Total: 51 tests passing**
+**Total: 65 tests passing**
 
 ### Coin Vesting Tests (32 tests)
 
@@ -491,29 +414,27 @@ transfer::public_transfer(returned_tokens, creator);
 | Admin | `test_admin_pause_nft_schedule`, `test_paused_nft_schedule_rejects_claims` |
 | Edge Cases | `test_nft_schedule_with_custom_ticks`, `test_time_until_claimable_before_start`, `test_delete_empty_nft_schedule`, `test_delete_non_empty_nft_schedule_fails`, `test_nft_time_constants` |
 
+### Strict Integration Tests (14 tests)
+
+| Category | Tests |
+|----------|-------|
+| LP Vesting | `test_strict_lp_vesting_full_lifecycle`, `test_strict_multiple_lp_vesting_parallel` |
+| External Coin | `test_strict_external_coin_vesting`, `test_strict_external_coin_revoke_before_cliff`, `test_strict_external_coin_revoke_during_vesting` |
+| Position NFT | `test_strict_position_nft_vesting_lifecycle`, `test_strict_position_nft_revoke_before_cliff`, `test_strict_position_nft_revoke_after_cliff_fails` |
+| External NFT | `test_strict_external_nft_vesting` |
+| Edge Cases | `test_strict_instant_cliff`, `test_strict_long_vesting_period`, `test_strict_non_beneficiary_cannot_claim`, `test_strict_cannot_claim_zero`, `test_strict_nft_cannot_claim_during_cliff` |
+
 ---
 
-## Integration with Launchpad
+## DEX LP Token Support
 
-The vesting module integrates with the launchpad for:
-
-1. **Token Vesting**: Launchpad graduates create team/investor token vesting schedules
-2. **LP Vesting**: Locked LP tokens are vested to teams over time
-3. **CLMM Support**: Concentrated liquidity positions from Cetus/Turbos can be vested
-
-```
-Launchpad Graduate
-       │
-       ├─────────────────────┬──────────────────┐
-       ▼                     ▼                  ▼
-  Team Tokens            LP Tokens         CLMM Position
-       │                     │                  │
-       ▼                     ▼                  ▼
-  VestingSchedule<TOKEN>  VestingSchedule<LP>  NFTVestingSchedule<Position>
-       │                     │                  │
-       ▼                     ▼                  ▼
-  claim() over time    claim() over time    claim_nft() after cliff
-```
+| DEX | LP Type | Module to Use |
+|-----|---------|---------------|
+| SuiDex | `Coin<LP>` | `vesting.move` |
+| FlowX | `Coin<LP<X,Y>>` | `vesting.move` |
+| Cetus CLMM | `Position` NFT | `nft_vesting.move` |
+| Turbos CLMM | `Position` NFT | `nft_vesting.move` |
+| FlowX CLMM | `Position` NFT | `nft_vesting.move` |
 
 ---
 
@@ -527,8 +448,9 @@ Launchpad Graduate
 | Access control | DONE | `access.move` |
 | Coin vesting tests | DONE | 32 tests |
 | NFT vesting tests | DONE | 19 tests |
+| Strict tests | DONE | 14 tests |
+| Launchpad Integration | DONE | Full PTB flow documented |
 | Documentation | DONE | This document |
-| Integration with Launchpad | PENDING | |
 | Audit | NOT STARTED | |
 
 ---

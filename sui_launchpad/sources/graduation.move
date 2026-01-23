@@ -1,9 +1,22 @@
 /// Graduation module - handles token migration from bonding curve to DEX
 /// Tokens graduate when they reach the market cap threshold
 ///
-/// LP Token Distribution (Fund Safety):
-/// - Creator: 0-30% of LP tokens (vested over 6mo cliff + 12mo vesting)
-/// - Community: 70-100% of LP tokens (burned by default = locked forever)
+/// LP/Position Distribution at Graduation:
+/// ────────────────────────────────────────
+/// - Creator: 2.5% (VESTED via sui_vesting package)
+/// - Protocol: 2.5% (DIRECT transfer to treasury)
+/// - DAO: 95% (DIRECT transfer to DAO treasury)
+///
+/// PTB Flow for Graduation:
+/// ────────────────────────
+/// 1. Call initiate_graduation() → PendingGraduation
+/// 2. Extract SUI/tokens from PendingGraduation
+/// 3. Call DEX to create pool/position
+/// 4. Call split_lp_tokens() → (creator_coin, protocol_coin, dao_coin)
+/// 5. For creator_coin: Call sui_vesting::vesting::create_schedule()
+/// 6. Transfer protocol_coin to treasury
+/// 7. Transfer/burn dao_coin based on config
+/// 8. Call complete_graduation()
 module sui_launchpad::graduation {
 
     use sui::coin::{Self, Coin};
@@ -58,30 +71,25 @@ module sui_launchpad::graduation {
         community_lp_destination: u8,
     }
 
-    /// Creator LP vesting schedule - holds creator's LP tokens until vesting completes
-    /// Creator can claim tokens linearly after cliff period ends
-    public struct CreatorLPVesting<phantom LP> has key, store {
-        id: UID,
-        pool_id: ID,
-        creator: address,
-        lp_balance: Balance<LP>,
-        total_amount: u64,
-        claimed_amount: u64,
-        start_time: u64,
-        cliff_ms: u64,
-        vesting_ms: u64,
-        lp_type: TypeName,
-    }
-
-    /// LP Distribution info passed to DEX adapters
+    /// LP/Position Distribution info passed to DEX adapters
+    /// Distribution: Creator (vested) + Protocol (direct) + DAO (remainder)
     public struct LPDistributionConfig has copy, drop, store {
+        // Creator settings (VESTED via sui_vesting)
         creator: address,
-        creator_bps: u64,
-        creator_cliff_ms: u64,
-        creator_vesting_ms: u64,
-        community_destination: u8, // 0=burn, 1=dao, 2=staking, 3=community_vest
-        dao_address: address,
-        staking_address: address,
+        creator_bps: u64,              // Creator's share (default 2.5%)
+        creator_cliff_ms: u64,         // Cliff before vesting starts
+        creator_vesting_ms: u64,       // Linear vesting duration
+
+        // Protocol settings (DIRECT TRANSFER)
+        protocol_bps: u64,             // Protocol's share (default 2.5%)
+        protocol_treasury: address,    // Where protocol LP goes
+
+        // DAO settings (REMAINDER = 100% - creator - protocol)
+        dao_bps: u64,                  // DAO's share (calculated, default 95%)
+        dao_treasury: address,         // Where DAO LP goes
+        dao_destination: u8,           // 0=burn, 1=dao_treasury, 2=staking, 3=vest
+        dao_cliff_ms: u64,             // If destination = vest
+        dao_vesting_ms: u64,           // If destination = vest
     }
 
     /// Pending graduation - hot potato that must be consumed
@@ -118,8 +126,9 @@ module sui_launchpad::graduation {
     /// - Remaining: Goes to DEX liquidity pool
     ///
     /// LP Token Distribution (after DEX creates pool):
-    /// - Creator: 0-30% (vested with cliff + linear vesting)
-    /// - Community: 70-100% (burned/dao/staking/vested based on config)
+    /// - Creator: 2.5% (vested via sui_vesting package)
+    /// - Protocol: 2.5% (direct transfer to treasury)
+    /// - DAO: 95% (direct transfer/burn based on config)
     public fun initiate_graduation<T>(
         _admin: &AdminCap,
         pool: &mut BondingPool<T>,
@@ -187,14 +196,24 @@ module sui_launchpad::graduation {
         };
 
         // Build LP distribution config for DEX adapter
+        // Distribution: Creator (vested) + Protocol (direct) + DAO (remainder)
         let lp_distribution = LPDistributionConfig {
+            // Creator (VESTED via sui_vesting)
             creator,
             creator_bps: config::creator_lp_bps(config),
             creator_cliff_ms: config::creator_lp_cliff_ms(config),
             creator_vesting_ms: config::creator_lp_vesting_ms(config),
-            community_destination: config::community_lp_destination(config),
-            dao_address: config::treasury(config),     // DAO uses treasury for now
-            staking_address: config::treasury(config), // Staking uses treasury for now
+
+            // Protocol (DIRECT)
+            protocol_bps: config::protocol_lp_bps(config),
+            protocol_treasury: config::treasury(config),
+
+            // DAO (REMAINDER)
+            dao_bps: config::dao_lp_bps(config),
+            dao_treasury: config::dao_treasury(config),
+            dao_destination: config::dao_lp_destination(config),
+            dao_cliff_ms: config::dao_lp_cliff_ms(config),
+            dao_vesting_ms: config::dao_lp_vesting_ms(config),
         };
 
         // Return pending graduation with remaining tokens for DEX liquidity
@@ -215,7 +234,7 @@ module sui_launchpad::graduation {
 
     /// Complete graduation after DEX pool creation
     /// DEX adapter calls this after creating liquidity pool
-    /// LP tokens should have already been distributed via distribute_lp_tokens
+    /// LP tokens should have already been distributed via split_lp_tokens
     public fun complete_graduation<T>(
         pending: PendingGraduation<T>,
         registry: &mut Registry,
@@ -276,7 +295,7 @@ module sui_launchpad::graduation {
             total_lp_tokens,
             creator_lp_tokens,
             community_lp_tokens,
-            community_lp_destination: lp_distribution.community_destination,
+            community_lp_destination: lp_distribution.dao_destination,
         }
     }
 
@@ -359,7 +378,7 @@ module sui_launchpad::graduation {
             total_lp_tokens,
             creator_lp_tokens,
             community_lp_tokens,
-            community_lp_destination: lp_distribution.community_destination,
+            community_lp_destination: lp_distribution.dao_destination,
         }
     }
 
@@ -434,177 +453,121 @@ module sui_launchpad::graduation {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // LP DISTRIBUTION (called by DEX adapters after creating LP)
+    // LP/POSITION SPLITTING (PTB calls this, then handles vesting separately)
+    // Distribution: Creator (vested) + Protocol (direct) + DAO (remainder)
     // ═══════════════════════════════════════════════════════════════════════
 
-    /// Distribute LP tokens according to config
-    /// DEX adapter calls this after receiving LP tokens from pool creation
-    /// Returns (creator_lp_amount, community_lp_amount)
-    public fun distribute_lp_tokens<T, LP: store>(
+    /// Split LP tokens into 3 parts according to config
+    /// Returns (creator_coin, protocol_coin, dao_coin)
+    ///
+    /// PTB should then:
+    /// - creator_coin: Call sui_vesting::vesting::create_schedule() for vesting
+    /// - protocol_coin: Transfer directly to protocol treasury
+    /// - dao_coin: Transfer/burn based on dao_destination config
+    public fun split_lp_tokens<T, LP>(
         pending: &PendingGraduation<T>,
         mut lp_tokens: Coin<LP>,
-        pool_id: ID,
-        clock: &Clock,
         ctx: &mut TxContext,
-    ): (u64, u64) {
+    ): (Coin<LP>, Coin<LP>, Coin<LP>) {
         let total_lp = coin::value(&lp_tokens);
         assert!(total_lp > 0, EInvalidLPAmount);
 
         let lp_config = &pending.lp_distribution;
 
-        // Calculate split
+        // Calculate split (Creator + Protocol + DAO = 100%)
         let creator_lp_amount = math::bps(total_lp, lp_config.creator_bps);
-        let community_lp_amount = total_lp - creator_lp_amount;
+        let protocol_lp_amount = math::bps(total_lp, lp_config.protocol_bps);
+        // DAO gets the remainder
+        let dao_lp_amount = total_lp - creator_lp_amount - protocol_lp_amount;
 
-        // Handle creator LP (vested)
-        if (creator_lp_amount > 0) {
-            let creator_lp = coin::split(&mut lp_tokens, creator_lp_amount, ctx);
+        // Split coins
+        let creator_coin = coin::split(&mut lp_tokens, creator_lp_amount, ctx);
+        let protocol_coin = coin::split(&mut lp_tokens, protocol_lp_amount, ctx);
+        // Remaining is DAO coin
+        let dao_coin = lp_tokens;
 
-            // Create vesting schedule for creator
-            let vesting = CreatorLPVesting<LP> {
-                id: object::new(ctx),
-                pool_id,
-                creator: lp_config.creator,
-                lp_balance: coin::into_balance(creator_lp),
-                total_amount: creator_lp_amount,
-                claimed_amount: 0,
-                start_time: clock.timestamp_ms(),
-                cliff_ms: lp_config.creator_cliff_ms,
-                vesting_ms: lp_config.creator_vesting_ms,
-                lp_type: type_name::with_defining_ids<LP>(),
-            };
+        // Verify DAO amount
+        assert!(coin::value(&dao_coin) == dao_lp_amount, EInvalidLPAmount);
 
-            // Transfer vesting schedule to creator
-            transfer::transfer(vesting, lp_config.creator);
+        (creator_coin, protocol_coin, dao_coin)
+    }
+
+    /// Convenience function: split and handle protocol + DAO transfers
+    /// Returns creator_coin for PTB to vest via sui_vesting
+    ///
+    /// This handles:
+    /// - Protocol LP: Direct transfer to protocol treasury
+    /// - DAO LP: Transfer/burn based on config
+    /// - Creator LP: Returned for PTB to vest
+    #[allow(lint(self_transfer))]
+    public fun split_and_distribute_lp_tokens<T, LP>(
+        pending: &PendingGraduation<T>,
+        lp_tokens: Coin<LP>,
+        ctx: &mut TxContext,
+    ): (Coin<LP>, u64, u64, u64) {
+        let (creator_coin, protocol_coin, dao_coin) = split_lp_tokens(pending, lp_tokens, ctx);
+
+        let creator_amount = coin::value(&creator_coin);
+        let protocol_amount = coin::value(&protocol_coin);
+        let dao_amount = coin::value(&dao_coin);
+
+        let lp_config = &pending.lp_distribution;
+
+        // Transfer protocol LP to treasury
+        if (protocol_amount > 0) {
+            transfer::public_transfer(protocol_coin, lp_config.protocol_treasury);
+        } else {
+            coin::destroy_zero(protocol_coin);
         };
 
-        // Handle community LP (burn/dao/staking/vest)
-        if (community_lp_amount > 0) {
-            let dest = lp_config.community_destination;
+        // Handle DAO LP based on destination
+        if (dao_amount > 0) {
+            let dest = lp_config.dao_destination;
 
             if (dest == config::lp_dest_burn()) {
-                // Burn = send to dead address (0x0)
-                transfer::public_transfer(lp_tokens, BURN_ADDRESS);
+                // Burn = send to dead address (0x0) - locked forever
+                transfer::public_transfer(dao_coin, BURN_ADDRESS);
             } else if (dest == config::lp_dest_dao()) {
-                // Send to DAO treasury
-                transfer::public_transfer(lp_tokens, lp_config.dao_address);
+                // Direct transfer to DAO treasury
+                transfer::public_transfer(dao_coin, lp_config.dao_treasury);
             } else if (dest == config::lp_dest_staking()) {
-                // Send to staking contract
-                transfer::public_transfer(lp_tokens, lp_config.staking_address);
+                // Send to staking contract (use dao_treasury for now)
+                transfer::public_transfer(dao_coin, lp_config.dao_treasury);
             } else {
-                // Community vest - send to treasury for now (future: vesting contract)
-                transfer::public_transfer(lp_tokens, lp_config.dao_address);
+                // Vested to DAO - send to dao_treasury (future: vesting)
+                transfer::public_transfer(dao_coin, lp_config.dao_treasury);
             };
         } else {
-            // No community LP, destroy empty coin
-            coin::destroy_zero(lp_tokens);
+            coin::destroy_zero(dao_coin);
         };
 
-        (creator_lp_amount, community_lp_amount)
+        // Return creator coin for PTB to vest via sui_vesting
+        (creator_coin, creator_amount, protocol_amount, dao_amount)
     }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // CREATOR LP VESTING CLAIMS
-    // ═══════════════════════════════════════════════════════════════════════
-
-    /// Calculate how much LP the creator can claim now
-    public fun claimable_lp<LP: store>(
-        vesting: &CreatorLPVesting<LP>,
-        clock: &Clock,
-    ): u64 {
-        let now = clock.timestamp_ms();
-        let start = vesting.start_time;
-        let cliff_end = start + vesting.cliff_ms;
-
-        // Before cliff ends, nothing is claimable
-        if (now < cliff_end) {
-            return 0
-        };
-
-        let vesting_end = cliff_end + vesting.vesting_ms;
-
-        // Calculate total vested
-        let vested = if (now >= vesting_end) {
-            // Fully vested
-            vesting.total_amount
-        } else {
-            // Linear vesting after cliff
-            let time_since_cliff = now - cliff_end;
-            let vested_ratio = (time_since_cliff as u128) * 10000 / (vesting.vesting_ms as u128);
-            let vested_amount = (vesting.total_amount as u128) * vested_ratio / 10000;
-            (vested_amount as u64)
-        };
-
-        // Subtract already claimed
-        if (vested > vesting.claimed_amount) {
-            vested - vesting.claimed_amount
-        } else {
-            0
-        }
-    }
-
-    /// Creator claims their vested LP tokens
-    public fun claim_creator_lp<LP: store>(
-        vesting: &mut CreatorLPVesting<LP>,
-        clock: &Clock,
-        ctx: &mut TxContext,
-    ): Coin<LP> {
-        // Only creator can claim
-        assert!(ctx.sender() == vesting.creator, ENotReadyForGraduation);
-
-        let claimable = claimable_lp(vesting, clock);
-        assert!(claimable > 0, EInsufficientLiquidity);
-
-        // Update claimed amount
-        vesting.claimed_amount = vesting.claimed_amount + claimable;
-
-        // Extract and return LP tokens
-        coin::from_balance(balance::split(&mut vesting.lp_balance, claimable), ctx)
-    }
-
-    /// Check if all LP tokens have been claimed and destroy vesting object
-    public fun destroy_empty_vesting<LP: store>(
-        vesting: CreatorLPVesting<LP>,
-    ) {
-        let CreatorLPVesting {
-            id,
-            pool_id: _,
-            creator: _,
-            lp_balance,
-            total_amount: _,
-            claimed_amount: _,
-            start_time: _,
-            cliff_ms: _,
-            vesting_ms: _,
-            lp_type: _,
-        } = vesting;
-
-        balance::destroy_zero(lp_balance);
-        object::delete(id);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // VESTING GETTERS
-    // ═══════════════════════════════════════════════════════════════════════
-
-    public fun vesting_pool_id<LP: store>(v: &CreatorLPVesting<LP>): ID { v.pool_id }
-    public fun vesting_creator<LP: store>(v: &CreatorLPVesting<LP>): address { v.creator }
-    public fun vesting_total_amount<LP: store>(v: &CreatorLPVesting<LP>): u64 { v.total_amount }
-    public fun vesting_claimed_amount<LP: store>(v: &CreatorLPVesting<LP>): u64 { v.claimed_amount }
-    public fun vesting_start_time<LP: store>(v: &CreatorLPVesting<LP>): u64 { v.start_time }
-    public fun vesting_cliff_ms<LP: store>(v: &CreatorLPVesting<LP>): u64 { v.cliff_ms }
-    public fun vesting_vesting_ms<LP: store>(v: &CreatorLPVesting<LP>): u64 { v.vesting_ms }
-    public fun vesting_remaining<LP: store>(v: &CreatorLPVesting<LP>): u64 { balance::value(&v.lp_balance) }
 
     // ═══════════════════════════════════════════════════════════════════════
     // LP DISTRIBUTION CONFIG GETTERS
     // ═══════════════════════════════════════════════════════════════════════
 
+    // Creator getters
     public fun lp_config_creator(c: &LPDistributionConfig): address { c.creator }
     public fun lp_config_creator_bps(c: &LPDistributionConfig): u64 { c.creator_bps }
     public fun lp_config_creator_cliff_ms(c: &LPDistributionConfig): u64 { c.creator_cliff_ms }
     public fun lp_config_creator_vesting_ms(c: &LPDistributionConfig): u64 { c.creator_vesting_ms }
-    public fun lp_config_community_destination(c: &LPDistributionConfig): u8 { c.community_destination }
+
+    // Protocol getters
+    public fun lp_config_protocol_bps(c: &LPDistributionConfig): u64 { c.protocol_bps }
+    public fun lp_config_protocol_treasury(c: &LPDistributionConfig): address { c.protocol_treasury }
+
+    // DAO getters
+    public fun lp_config_dao_bps(c: &LPDistributionConfig): u64 { c.dao_bps }
+    public fun lp_config_dao_treasury(c: &LPDistributionConfig): address { c.dao_treasury }
+    public fun lp_config_dao_destination(c: &LPDistributionConfig): u8 { c.dao_destination }
+    public fun lp_config_dao_cliff_ms(c: &LPDistributionConfig): u64 { c.dao_cliff_ms }
+    public fun lp_config_dao_vesting_ms(c: &LPDistributionConfig): u64 { c.dao_vesting_ms }
+
+    // Deprecated (use dao_* instead)
+    public fun lp_config_community_destination(c: &LPDistributionConfig): u8 { c.dao_destination }
 
     // ═══════════════════════════════════════════════════════════════════════
     // RECEIPT GETTERS

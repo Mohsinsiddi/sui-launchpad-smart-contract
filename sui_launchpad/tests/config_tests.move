@@ -58,8 +58,9 @@ module sui_launchpad::config_tests {
             assert!(config::platform_graduation_bps(&config) == 250, 7); // 2.5%
 
             // Verify LP distribution defaults
-            assert!(config::creator_lp_bps(&config) == 2000, 8); // 20%
-            assert!(config::community_lp_destination(&config) == 0, 9); // burn
+            assert!(config::creator_lp_bps(&config) == 250, 8); // 2.5% (creator vested)
+            assert!(config::protocol_lp_bps(&config) == 250, 81); // 2.5% (protocol direct)
+            assert!(config::dao_lp_destination(&config) == 1, 9); // DAO treasury (not burn)
 
             test_scenario::return_shared(config);
         };

@@ -34,14 +34,17 @@ module sui_launchpad::config {
     /// Maximum creator LP percentage (30% = 3000 bps)
     const MAX_CREATOR_LP_BPS: u64 = 3000;
 
+    /// Maximum protocol LP percentage (10% = 1000 bps)
+    const MAX_PROTOCOL_LP_BPS: u64 = 1000;
+
     /// Minimum LP lock duration (90 days in ms)
     const MIN_LP_LOCK_DURATION: u64 = 7_776_000_000;
 
-    // LP Destination types
-    const LP_DEST_BURN: u8 = 0;
-    const LP_DEST_DAO: u8 = 1;
-    const LP_DEST_STAKING: u8 = 2;
-    const LP_DEST_COMMUNITY_VEST: u8 = 3;
+    // LP/Position Destination types for DAO share
+    const LP_DEST_BURN: u8 = 0;        // Send to 0x0 (locked forever)
+    const LP_DEST_DAO: u8 = 1;         // Direct transfer to DAO treasury
+    const LP_DEST_STAKING: u8 = 2;     // Send to staking contract
+    const LP_DEST_COMMUNITY_VEST: u8 = 3; // Vest to community
 
     // ═══════════════════════════════════════════════════════════════════════
     // ERRORS
@@ -55,6 +58,8 @@ module sui_launchpad::config {
     const ECreatorLPTooHigh: u64 = 105;
     const EInvalidLPDestination: u64 = 106;
     const EBelowHardMinimum: u64 = 107;
+    const EProtocolLPTooHigh: u64 = 108;
+    const ELPAllocationTooHigh: u64 = 109;
 
     // ═══════════════════════════════════════════════════════════════════════
     // CONFIG STRUCT
@@ -113,24 +118,31 @@ module sui_launchpad::config {
         paused: bool,
 
         // ═══════════════════════════════════════════════════════════════════
-        // LP TOKEN DISTRIBUTION SETTINGS (Fund Safety)
+        // LP/POSITION DISTRIBUTION SETTINGS (Fund Safety)
+        // Distribution: Creator (vested) + Protocol (direct) + DAO (remainder)
         // ═══════════════════════════════════════════════════════════════════
 
-        // ─── Creator LP Settings ───────────────────────────────────────────
-        /// Creator LP percentage (0-30% = 0-3000 bps)
+        // ─── Creator LP Settings (VESTED) ──────────────────────────────────
+        /// Creator LP/Position percentage (0-30% = 0-3000 bps, default 2.5%)
         creator_lp_bps: u64,
-        /// Creator LP vesting cliff duration (in ms)
+        /// Creator LP vesting cliff duration (in ms, default 6 months)
         creator_lp_cliff_ms: u64,
-        /// Creator LP vesting duration after cliff (in ms)
+        /// Creator LP vesting duration after cliff (in ms, default 12 months)
         creator_lp_vesting_ms: u64,
 
-        // ─── Community LP Settings ─────────────────────────────────────────
-        /// Community LP destination (0=burn, 1=dao, 2=staking, 3=community_vest)
-        community_lp_destination: u8,
-        /// Community LP vesting cliff (if destination = community_vest)
-        community_lp_cliff_ms: u64,
-        /// Community LP vesting duration (if destination = community_vest)
-        community_lp_vesting_ms: u64,
+        // ─── Protocol LP Settings (DIRECT TRANSFER) ────────────────────────
+        /// Protocol LP/Position percentage (0-10% = 0-1000 bps, default 2.5%)
+        protocol_lp_bps: u64,
+
+        // ─── DAO LP Settings (REMAINDER = 100% - creator - protocol) ───────
+        /// DAO treasury address for LP/Position transfers
+        dao_treasury: address,
+        /// DAO LP destination (0=burn, 1=dao_treasury, 2=staking, 3=vested)
+        dao_lp_destination: u8,
+        /// DAO LP vesting cliff (if destination = vested)
+        dao_lp_cliff_ms: u64,
+        /// DAO LP vesting duration (if destination = vested)
+        dao_lp_vesting_ms: u64,
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -205,18 +217,23 @@ module sui_launchpad::config {
             paused: false,
 
             // ═══════════════════════════════════════════════════════════════
-            // LP TOKEN DISTRIBUTION DEFAULTS (Fund Safety)
+            // LP/POSITION DISTRIBUTION DEFAULTS (Fund Safety)
+            // Default: Creator 2.5% (vested) + Protocol 2.5% (direct) + DAO 95% (direct)
             // ═══════════════════════════════════════════════════════════════
 
-            // Creator LP settings
-            creator_lp_bps: 2000,                 // 20% of LP to creator
+            // Creator LP settings (VESTED)
+            creator_lp_bps: 250,                  // 2.5% of LP to creator
             creator_lp_cliff_ms: 15_552_000_000,  // 6 months cliff
-            creator_lp_vesting_ms: 31_104_000_000, // 12 months vesting
+            creator_lp_vesting_ms: 31_104_000_000, // 12 months linear vesting
 
-            // Community LP settings
-            community_lp_destination: LP_DEST_BURN, // Burn = liquidity locked forever
-            community_lp_cliff_ms: 0,              // No cliff if burn
-            community_lp_vesting_ms: 0,            // No vesting if burn
+            // Protocol LP settings (DIRECT)
+            protocol_lp_bps: 250,                 // 2.5% of LP to protocol treasury
+
+            // DAO LP settings (gets remainder = 95%)
+            dao_treasury: treasury,               // Same as platform treasury by default
+            dao_lp_destination: LP_DEST_DAO,      // Direct transfer to DAO treasury
+            dao_lp_cliff_ms: 0,                   // No vesting for DAO
+            dao_lp_vesting_ms: 0,                 // No vesting for DAO
         };
 
         event::emit(ConfigCreated {
@@ -410,12 +427,14 @@ module sui_launchpad::config {
     // ═══════════════════════════════════════════════════════════════════════
 
     /// Set creator LP percentage (max 30%)
+    /// Creator + Protocol must not exceed 50% (DAO gets at least 50%)
     public fun set_creator_lp_bps(
         _admin: &AdminCap,
         config: &mut LaunchpadConfig,
         new_bps: u64,
     ) {
         assert!(new_bps <= MAX_CREATOR_LP_BPS, ECreatorLPTooHigh);
+        assert!(new_bps + config.protocol_lp_bps <= 5000, ELPAllocationTooHigh); // Max 50% combined
         let old = config.creator_lp_bps;
         config.creator_lp_bps = new_bps;
         event::emit(ConfigUpdated { field: b"creator_lp_bps", old_value: old, new_value: new_bps });
@@ -437,28 +456,75 @@ module sui_launchpad::config {
         event::emit(ConfigUpdated { field: b"creator_lp_vesting_ms", old_value: 0, new_value: vesting_ms });
     }
 
-    /// Set community LP destination
-    public fun set_community_lp_destination(
+    /// Set protocol LP percentage (max 10%)
+    /// Creator + Protocol must not exceed 50% (DAO gets at least 50%)
+    public fun set_protocol_lp_bps(
+        _admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        new_bps: u64,
+    ) {
+        assert!(new_bps <= MAX_PROTOCOL_LP_BPS, EProtocolLPTooHigh);
+        assert!(config.creator_lp_bps + new_bps <= 5000, ELPAllocationTooHigh); // Max 50% combined
+        let old = config.protocol_lp_bps;
+        config.protocol_lp_bps = new_bps;
+        event::emit(ConfigUpdated { field: b"protocol_lp_bps", old_value: old, new_value: new_bps });
+    }
+
+    /// Set DAO treasury address (for LP/Position transfers)
+    public fun set_dao_treasury(
+        _admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        new_dao_treasury: address,
+    ) {
+        config.dao_treasury = new_dao_treasury;
+        event::emit(TreasuryUpdated { old_treasury: @0x0, new_treasury: new_dao_treasury });
+    }
+
+    /// Set DAO LP destination
+    public fun set_dao_lp_destination(
         _admin: &AdminCap,
         config: &mut LaunchpadConfig,
         destination: u8,
     ) {
         assert!(destination <= LP_DEST_COMMUNITY_VEST, EInvalidLPDestination);
-        config.community_lp_destination = destination;
-        event::emit(ConfigUpdated { field: b"community_lp_destination", old_value: 0, new_value: destination as u64 });
+        config.dao_lp_destination = destination;
+        event::emit(ConfigUpdated { field: b"dao_lp_destination", old_value: 0, new_value: destination as u64 });
     }
 
-    /// Set community LP vesting parameters (only used if destination = community_vest)
-    public fun set_community_lp_vesting(
+    /// Set DAO LP vesting parameters (only used if destination = vested)
+    public fun set_dao_lp_vesting(
         _admin: &AdminCap,
         config: &mut LaunchpadConfig,
         cliff_ms: u64,
         vesting_ms: u64,
     ) {
-        config.community_lp_cliff_ms = cliff_ms;
-        config.community_lp_vesting_ms = vesting_ms;
-        event::emit(ConfigUpdated { field: b"community_lp_cliff_ms", old_value: 0, new_value: cliff_ms });
-        event::emit(ConfigUpdated { field: b"community_lp_vesting_ms", old_value: 0, new_value: vesting_ms });
+        config.dao_lp_cliff_ms = cliff_ms;
+        config.dao_lp_vesting_ms = vesting_ms;
+        event::emit(ConfigUpdated { field: b"dao_lp_cliff_ms", old_value: 0, new_value: cliff_ms });
+        event::emit(ConfigUpdated { field: b"dao_lp_vesting_ms", old_value: 0, new_value: vesting_ms });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // DEPRECATED - Use dao_* instead of community_* (kept for compatibility)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// @deprecated Use set_dao_lp_destination instead
+    public fun set_community_lp_destination(
+        admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        destination: u8,
+    ) {
+        set_dao_lp_destination(admin, config, destination);
+    }
+
+    /// @deprecated Use set_dao_lp_vesting instead
+    public fun set_community_lp_vesting(
+        admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        cliff_ms: u64,
+        vesting_ms: u64,
+    ) {
+        set_dao_lp_vesting(admin, config, cliff_ms, vesting_ms);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -484,13 +550,24 @@ module sui_launchpad::config {
     public fun treasury(config: &LaunchpadConfig): address { config.treasury }
     public fun is_paused(config: &LaunchpadConfig): bool { config.paused }
 
-    // ─── LP Distribution Getters (Fund Safety) ─────────────────────────────
+    // ─── LP/Position Distribution Getters (Fund Safety) ────────────────────
     public fun creator_lp_bps(config: &LaunchpadConfig): u64 { config.creator_lp_bps }
     public fun creator_lp_cliff_ms(config: &LaunchpadConfig): u64 { config.creator_lp_cliff_ms }
     public fun creator_lp_vesting_ms(config: &LaunchpadConfig): u64 { config.creator_lp_vesting_ms }
-    public fun community_lp_destination(config: &LaunchpadConfig): u8 { config.community_lp_destination }
-    public fun community_lp_cliff_ms(config: &LaunchpadConfig): u64 { config.community_lp_cliff_ms }
-    public fun community_lp_vesting_ms(config: &LaunchpadConfig): u64 { config.community_lp_vesting_ms }
+    public fun protocol_lp_bps(config: &LaunchpadConfig): u64 { config.protocol_lp_bps }
+    public fun dao_treasury(config: &LaunchpadConfig): address { config.dao_treasury }
+    public fun dao_lp_destination(config: &LaunchpadConfig): u8 { config.dao_lp_destination }
+    public fun dao_lp_cliff_ms(config: &LaunchpadConfig): u64 { config.dao_lp_cliff_ms }
+    public fun dao_lp_vesting_ms(config: &LaunchpadConfig): u64 { config.dao_lp_vesting_ms }
+    /// Calculate DAO LP share (remainder after creator + protocol)
+    public fun dao_lp_bps(config: &LaunchpadConfig): u64 {
+        10000 - config.creator_lp_bps - config.protocol_lp_bps
+    }
+
+    // ─── Deprecated getters (use dao_* instead) ───────────────────────────
+    public fun community_lp_destination(config: &LaunchpadConfig): u8 { config.dao_lp_destination }
+    public fun community_lp_cliff_ms(config: &LaunchpadConfig): u64 { config.dao_lp_cliff_ms }
+    public fun community_lp_vesting_ms(config: &LaunchpadConfig): u64 { config.dao_lp_vesting_ms }
 
     // ═══════════════════════════════════════════════════════════════════════
     // VALIDATION HELPERS

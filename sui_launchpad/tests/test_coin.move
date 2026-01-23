@@ -28,4 +28,13 @@ module sui_launchpad::test_coin {
     public fun get_witness(): TEST_COIN {
         TEST_COIN {}
     }
+
+    /// Mint test coins directly for testing (simulates LP tokens, etc.)
+    public fun mint(amount: u64, ctx: &mut TxContext): coin::Coin<TEST_COIN> {
+        let (mut treasury_cap, metadata) = create_test_coin(ctx);
+        let coins = coin::mint(&mut treasury_cap, amount, ctx);
+        transfer::public_freeze_object(metadata);
+        transfer::public_transfer(treasury_cap, ctx.sender());
+        coins
+    }
 }
