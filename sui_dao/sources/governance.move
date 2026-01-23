@@ -682,6 +682,11 @@ module sui_dao::governance {
         object::delete(id);
     }
 
+    #[test_only]
+    public fun share_governance_for_testing(governance: Governance) {
+        transfer::share_object(governance);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // TESTS
     // ═══════════════════════════════════════════════════════════════════════

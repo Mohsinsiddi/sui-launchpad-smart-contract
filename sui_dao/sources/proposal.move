@@ -887,6 +887,12 @@ module sui_dao::proposal {
         proposal.execution_deadline_ms = execute_after_ms + EXECUTION_WINDOW_MS;
     }
 
+    #[test_only]
+    /// Share a proposal for testing purposes
+    public fun share_proposal_for_testing(proposal: Proposal) {
+        transfer::share_object(proposal);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // TESTS
     // ═══════════════════════════════════════════════════════════════════════

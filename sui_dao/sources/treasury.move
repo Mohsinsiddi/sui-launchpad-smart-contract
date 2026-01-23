@@ -358,6 +358,11 @@ module sui_dao::treasury {
         nft_counters.destroy_empty();
     }
 
+    #[test_only]
+    public fun share_treasury_for_testing(treasury: Treasury) {
+        transfer::share_object(treasury);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // TESTS
     // ═══════════════════════════════════════════════════════════════════════
