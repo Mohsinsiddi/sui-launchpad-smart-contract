@@ -336,8 +336,11 @@ STEP 2: CALCULATE SPLITS
     graduation_fee = pool.sui_reserve * 5%          → Platform treasury
     liquidity_sui = pool.sui_reserve - graduation_fee → Goes to DEX
 
-    Tokens for LP: Calculated based on target price
-    Platform tokens: 1% of total supply
+    Token Allocation:
+    ├── Creator tokens: 0-5% (configurable)         → Direct transfer
+    ├── Platform tokens: 2.5-5% (configurable)      → Direct transfer
+    ├── Staking tokens: 0-10% (if enabled)          → Staking pool rewards
+    └── DEX liquidity: Remaining tokens             → Liquidity pool
 
 STEP 3: SELECT DEX
 ══════════════════
@@ -439,6 +442,123 @@ For complete vesting documentation including:
 - Admin functions
 
 **See: [VESTING.md](./VESTING.md)**
+
+---
+
+## Staking Integration
+
+> **IMPORTANT:** At graduation, tokens can be automatically allocated for a staking pool.
+> This allows token holders to stake and earn rewards immediately after DEX listing.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    STAKING INTEGRATION (Post-Graduation)                 │
+│                    → Uses sui_staking package via PTB                    │
+└─────────────────────────────────────────────────────────────────────────┘
+
+TOKEN ALLOCATION AT GRADUATION:
+───────────────────────────────
+┌──────────────────────────────────────────────────────────────────────┐
+│  Total Token Supply (100%)                                           │
+├──────────────────────────────────────────────────────────────────────┤
+│  ├── Creator Tokens:   0-5%  (configurable)  → Direct transfer       │
+│  ├── Platform Tokens:  2.5-5% (configurable) → Platform treasury     │
+│  ├── Staking Tokens:   0-10% (if enabled)    → Staking pool rewards  │
+│  └── DEX Liquidity:    80-97.5% (remainder)  → LP provision          │
+└──────────────────────────────────────────────────────────────────────┘
+
+PTB FLOW FOR GRADUATION + STAKING:
+──────────────────────────────────
+1. initiate_graduation<T>()
+   → PendingGraduation<T> (includes staking_balance)
+
+2. extract_staking_tokens<T>(&mut pending)
+   → Coin<T> (reward tokens for staking pool)
+
+3. Create DEX pool (Cetus/SuiDex/etc)
+   → LP tokens
+
+4. sui_staking::factory::create_pool_free<T, T>(
+       staking_registry,
+       staking_admin_cap,     ← Requires staking AdminCap
+       reward_tokens,
+       start_time_ms,
+       duration_ms,
+       min_stake_duration_ms,
+       early_unstake_fee_bps,
+       stake_fee_bps,
+       unstake_fee_bps,
+       clock,
+       ctx
+   )
+   → PoolAdminCap
+
+5. Transfer PoolAdminCap to destination
+   (creator / dao_treasury / platform)
+
+6. split_lp_tokens() → (creator_lp, protocol_lp, dao_lp)
+
+7. Vest creator LP (sui_vesting)
+
+8. complete_graduation()
+
+STAKING ADMIN DESTINATIONS:
+───────────────────────────
+│ Value │ Destination     │ Use Case                           │
+│───────┼─────────────────┼────────────────────────────────────│
+│   0   │ Creator         │ Creator manages their staking pool │
+│   1   │ DAO Treasury    │ Community-controlled               │
+│   2   │ Platform        │ Platform operates for creator      │
+
+Default: Creator (0) - Creator receives PoolAdminCap
+
+REWARD TOKEN TYPES:
+───────────────────
+│ Value │ Type        │ Description                          │
+│───────┼─────────────┼──────────────────────────────────────│
+│   0   │ Same Token  │ Reward with same graduated token     │
+│   1   │ SUI         │ Reward with SUI (requires funding)   │
+│   2   │ Custom      │ Custom token (manual setup)          │
+
+Default: Same Token (0) - Most common for meme coins
+```
+
+### Staking Configuration
+
+All staking parameters are configurable by platform admin:
+
+| Parameter | Default | Range | Description |
+|-----------|---------|-------|-------------|
+| `staking_enabled` | `true` | bool | Create staking pool at graduation |
+| `staking_reward_bps` | `500` (5%) | 0-1000 | % of supply for rewards |
+| `staking_duration_ms` | 365 days | 7d-2y | Reward distribution period |
+| `staking_min_duration_ms` | 7 days | 0-30d | Min stake before withdrawal |
+| `staking_early_fee_bps` | `500` (5%) | 0-1000 | Early unstake penalty |
+| `staking_stake_fee_bps` | `0` | 0-500 | Fee on deposits |
+| `staking_unstake_fee_bps` | `0` | 0-500 | Fee on withdrawals |
+| `staking_admin_destination` | `0` (creator) | 0-2 | Who receives PoolAdminCap |
+| `staking_reward_type` | `0` (same) | 0-2 | Reward token type |
+
+### Admin Config Functions
+
+```move
+// Enable/disable staking
+config::set_staking_enabled(admin_cap, config, enabled);
+
+// Set reward allocation (0-10%)
+config::set_staking_reward_bps(admin_cap, config, 300); // 3%
+
+// Set staking duration (7 days to 2 years)
+config::set_staking_duration_ms(admin_cap, config, 15_768_000_000); // 6 months
+
+// Set early unstake fee
+config::set_staking_early_fee_bps(admin_cap, config, 1000); // 10%
+
+// Set admin destination (0=creator, 1=dao, 2=platform)
+config::set_staking_admin_destination(admin_cap, config, 1); // DAO
+```
+
+**Specification:** See [STAKING.md](./STAKING.md) for sui_staking package details.
 
 ---
 
@@ -690,17 +810,18 @@ struct LaunchpadConfig has key {
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Core utilities | ✅ DONE | math, access, errors |
-| Config | ✅ DONE | With graduation allocations + LP distribution |
+| Config | ✅ DONE | With graduation allocations + LP distribution + staking config |
 | Registry | ✅ DONE | Token registration |
 | Bonding curve | ✅ DONE | Pool, buy, sell |
-| Graduation | ✅ DONE | DEX migration + LP distribution |
+| Graduation | ✅ DONE | DEX migration + LP distribution + staking tokens |
 | Vesting Integration | ✅ DONE | Integrated with sui_vesting |
+| **Staking Integration** | ✅ DONE | PTB helpers for sui_staking |
 | Cetus adapter | ✅ DONE | CLMM + LP distribution |
 | Turbos adapter | ✅ DONE | CLMM + LP distribution |
 | FlowX adapter | ✅ DONE | CLMM + LP distribution |
 | SuiDex adapter | ✅ DONE | AMM + LP distribution |
 | Events | ✅ DONE | All events defined |
-| Tests | ✅ DONE | **219 tests passing** |
+| Tests | ✅ DONE | Tests passing |
 | Audit | Not Started | |
 
 **Overall Progress: 100%**

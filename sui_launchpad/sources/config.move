@@ -47,6 +47,47 @@ module sui_launchpad::config {
     const LP_DEST_COMMUNITY_VEST: u8 = 3; // Vest to community
 
     // ═══════════════════════════════════════════════════════════════════════
+    // STAKING INTEGRATION CONSTANTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Maximum staking reward allocation (10% = 1000 bps)
+    const MAX_STAKING_REWARD_BPS: u64 = 1000;
+
+    /// Default staking reward allocation (5% = 500 bps)
+    const DEFAULT_STAKING_REWARD_BPS: u64 = 500;
+
+    /// Default staking duration (365 days in ms)
+    const DEFAULT_STAKING_DURATION_MS: u64 = 31_536_000_000;
+
+    /// Minimum staking duration (7 days in ms)
+    const MIN_STAKING_DURATION_MS: u64 = 604_800_000;
+
+    /// Maximum staking duration (2 years in ms)
+    const MAX_STAKING_DURATION_MS: u64 = 63_072_000_000;
+
+    /// Default minimum stake duration (7 days in ms)
+    const DEFAULT_MIN_STAKE_DURATION_MS: u64 = 604_800_000;
+
+    /// Maximum minimum stake duration (30 days in ms)
+    const MAX_MIN_STAKE_DURATION_MS: u64 = 2_592_000_000;
+
+    /// Default early unstake fee (5% = 500 bps)
+    const DEFAULT_EARLY_UNSTAKE_FEE_BPS: u64 = 500;
+
+    /// Maximum stake/unstake fee (5% = 500 bps)
+    const MAX_STAKE_FEE_BPS: u64 = 500;
+
+    // Staking admin destination types
+    const STAKING_ADMIN_DEST_CREATOR: u8 = 0;   // Creator manages pool
+    const STAKING_ADMIN_DEST_DAO: u8 = 1;       // DAO treasury manages pool
+    const STAKING_ADMIN_DEST_PLATFORM: u8 = 2; // Platform manages pool
+
+    // Staking reward token types
+    const STAKING_REWARD_SAME_TOKEN: u8 = 0;   // Reward with same graduated token
+    const STAKING_REWARD_SUI: u8 = 1;          // Reward with SUI
+    const STAKING_REWARD_CUSTOM: u8 = 2;       // Custom reward token (requires separate setup)
+
+    // ═══════════════════════════════════════════════════════════════════════
     // ERRORS
     // ═══════════════════════════════════════════════════════════════════════
 
@@ -60,6 +101,12 @@ module sui_launchpad::config {
     const EBelowHardMinimum: u64 = 107;
     const EProtocolLPTooHigh: u64 = 108;
     const ELPAllocationTooHigh: u64 = 109;
+    const EStakingRewardTooHigh: u64 = 110;
+    const EInvalidStakingDuration: u64 = 111;
+    const EInvalidStakingMinDuration: u64 = 112;
+    const EInvalidStakingAdminDest: u64 = 113;
+    const EInvalidStakingRewardType: u64 = 114;
+    const EStakingFeeTooHigh: u64 = 115;
 
     // ═══════════════════════════════════════════════════════════════════════
     // CONFIG STRUCT
@@ -143,6 +190,30 @@ module sui_launchpad::config {
         dao_lp_cliff_ms: u64,
         /// DAO LP vesting duration (if destination = vested)
         dao_lp_vesting_ms: u64,
+
+        // ═══════════════════════════════════════════════════════════════════
+        // STAKING INTEGRATION SETTINGS
+        // At graduation, tokens are reserved for staking pool rewards
+        // ═══════════════════════════════════════════════════════════════════
+
+        /// Whether to automatically create staking pool at graduation
+        staking_enabled: bool,
+        /// Percentage of token supply reserved for staking rewards (default 5%)
+        staking_reward_bps: u64,
+        /// Duration of the staking reward period (default 365 days)
+        staking_duration_ms: u64,
+        /// Minimum stake duration before withdrawal (default 7 days)
+        staking_min_duration_ms: u64,
+        /// Early unstake fee (default 5%)
+        staking_early_fee_bps: u64,
+        /// Fee on staking (default 0)
+        staking_stake_fee_bps: u64,
+        /// Fee on unstaking (default 0)
+        staking_unstake_fee_bps: u64,
+        /// Who receives the PoolAdminCap (0=creator, 1=dao, 2=platform)
+        staking_admin_destination: u8,
+        /// Type of reward token (0=same_token, 1=sui, 2=custom)
+        staking_reward_type: u8,
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -234,6 +305,20 @@ module sui_launchpad::config {
             dao_lp_destination: LP_DEST_DAO,      // Direct transfer to DAO treasury
             dao_lp_cliff_ms: 0,                   // No vesting for DAO
             dao_lp_vesting_ms: 0,                 // No vesting for DAO
+
+            // ═══════════════════════════════════════════════════════════════
+            // STAKING INTEGRATION DEFAULTS
+            // ═══════════════════════════════════════════════════════════════
+
+            staking_enabled: true,                              // Enabled by default
+            staking_reward_bps: DEFAULT_STAKING_REWARD_BPS,     // 5% of token supply
+            staking_duration_ms: DEFAULT_STAKING_DURATION_MS,   // 365 days
+            staking_min_duration_ms: DEFAULT_MIN_STAKE_DURATION_MS, // 7 days
+            staking_early_fee_bps: DEFAULT_EARLY_UNSTAKE_FEE_BPS,  // 5% early unstake fee
+            staking_stake_fee_bps: 0,                           // No stake fee
+            staking_unstake_fee_bps: 0,                         // No unstake fee
+            staking_admin_destination: STAKING_ADMIN_DEST_CREATOR, // Creator manages pool
+            staking_reward_type: STAKING_REWARD_SAME_TOKEN,     // Same token rewards
         };
 
         event::emit(ConfigCreated {
@@ -505,6 +590,120 @@ module sui_launchpad::config {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
+    // STAKING INTEGRATION ADMIN SETTERS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Enable or disable staking pool creation at graduation
+    public fun set_staking_enabled(
+        _admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        enabled: bool,
+    ) {
+        config.staking_enabled = enabled;
+        event::emit(ConfigUpdated {
+            field: b"staking_enabled",
+            old_value: if (config.staking_enabled) { 1 } else { 0 },
+            new_value: if (enabled) { 1 } else { 0 }
+        });
+    }
+
+    /// Set staking reward percentage (0-10% of token supply)
+    public fun set_staking_reward_bps(
+        _admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        new_bps: u64,
+    ) {
+        assert!(new_bps <= MAX_STAKING_REWARD_BPS, EStakingRewardTooHigh);
+        let old = config.staking_reward_bps;
+        config.staking_reward_bps = new_bps;
+        event::emit(ConfigUpdated { field: b"staking_reward_bps", old_value: old, new_value: new_bps });
+    }
+
+    /// Set staking duration (7 days - 2 years)
+    public fun set_staking_duration_ms(
+        _admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        duration_ms: u64,
+    ) {
+        assert!(duration_ms >= MIN_STAKING_DURATION_MS && duration_ms <= MAX_STAKING_DURATION_MS, EInvalidStakingDuration);
+        let old = config.staking_duration_ms;
+        config.staking_duration_ms = duration_ms;
+        event::emit(ConfigUpdated { field: b"staking_duration_ms", old_value: old, new_value: duration_ms });
+    }
+
+    /// Set minimum stake duration (0 - 30 days)
+    public fun set_staking_min_duration_ms(
+        _admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        min_duration_ms: u64,
+    ) {
+        assert!(min_duration_ms <= MAX_MIN_STAKE_DURATION_MS, EInvalidStakingMinDuration);
+        let old = config.staking_min_duration_ms;
+        config.staking_min_duration_ms = min_duration_ms;
+        event::emit(ConfigUpdated { field: b"staking_min_duration_ms", old_value: old, new_value: min_duration_ms });
+    }
+
+    /// Set early unstake fee (0-10%)
+    public fun set_staking_early_fee_bps(
+        _admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        new_bps: u64,
+    ) {
+        assert!(new_bps <= MAX_FEE_BPS, EStakingFeeTooHigh);
+        let old = config.staking_early_fee_bps;
+        config.staking_early_fee_bps = new_bps;
+        event::emit(ConfigUpdated { field: b"staking_early_fee_bps", old_value: old, new_value: new_bps });
+    }
+
+    /// Set stake fee (0-5%)
+    public fun set_staking_stake_fee_bps(
+        _admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        new_bps: u64,
+    ) {
+        assert!(new_bps <= MAX_STAKE_FEE_BPS, EStakingFeeTooHigh);
+        let old = config.staking_stake_fee_bps;
+        config.staking_stake_fee_bps = new_bps;
+        event::emit(ConfigUpdated { field: b"staking_stake_fee_bps", old_value: old, new_value: new_bps });
+    }
+
+    /// Set unstake fee (0-5%)
+    public fun set_staking_unstake_fee_bps(
+        _admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        new_bps: u64,
+    ) {
+        assert!(new_bps <= MAX_STAKE_FEE_BPS, EStakingFeeTooHigh);
+        let old = config.staking_unstake_fee_bps;
+        config.staking_unstake_fee_bps = new_bps;
+        event::emit(ConfigUpdated { field: b"staking_unstake_fee_bps", old_value: old, new_value: new_bps });
+    }
+
+    /// Set staking admin destination (0=creator, 1=dao, 2=platform)
+    public fun set_staking_admin_destination(
+        _admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        destination: u8,
+    ) {
+        assert!(destination <= STAKING_ADMIN_DEST_PLATFORM, EInvalidStakingAdminDest);
+        let old = config.staking_admin_destination;
+        config.staking_admin_destination = destination;
+        event::emit(ConfigUpdated { field: b"staking_admin_destination", old_value: old as u64, new_value: destination as u64 });
+    }
+
+    /// Set staking reward type (0=same_token, 1=sui, 2=custom)
+    public fun set_staking_reward_type(
+        _admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        reward_type: u8,
+    ) {
+        assert!(reward_type <= STAKING_REWARD_CUSTOM, EInvalidStakingRewardType);
+        let old = config.staking_reward_type;
+        config.staking_reward_type = reward_type;
+        event::emit(ConfigUpdated { field: b"staking_reward_type", old_value: old as u64, new_value: reward_type as u64 });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // DEPRECATED - Use dao_* instead of community_* (kept for compatibility)
     // ═══════════════════════════════════════════════════════════════════════
 
@@ -569,6 +768,17 @@ module sui_launchpad::config {
     public fun community_lp_cliff_ms(config: &LaunchpadConfig): u64 { config.dao_lp_cliff_ms }
     public fun community_lp_vesting_ms(config: &LaunchpadConfig): u64 { config.dao_lp_vesting_ms }
 
+    // ─── Staking Integration Getters ─────────────────────────────────────────
+    public fun staking_enabled(config: &LaunchpadConfig): bool { config.staking_enabled }
+    public fun staking_reward_bps(config: &LaunchpadConfig): u64 { config.staking_reward_bps }
+    public fun staking_duration_ms(config: &LaunchpadConfig): u64 { config.staking_duration_ms }
+    public fun staking_min_duration_ms(config: &LaunchpadConfig): u64 { config.staking_min_duration_ms }
+    public fun staking_early_fee_bps(config: &LaunchpadConfig): u64 { config.staking_early_fee_bps }
+    public fun staking_stake_fee_bps(config: &LaunchpadConfig): u64 { config.staking_stake_fee_bps }
+    public fun staking_unstake_fee_bps(config: &LaunchpadConfig): u64 { config.staking_unstake_fee_bps }
+    public fun staking_admin_destination(config: &LaunchpadConfig): u8 { config.staking_admin_destination }
+    public fun staking_reward_type(config: &LaunchpadConfig): u8 { config.staking_reward_type }
+
     // ═══════════════════════════════════════════════════════════════════════
     // VALIDATION HELPERS
     // ═══════════════════════════════════════════════════════════════════════
@@ -615,4 +825,25 @@ module sui_launchpad::config {
 
     public fun max_creator_lp_bps(): u64 { MAX_CREATOR_LP_BPS }
     public fun min_lp_lock_duration(): u64 { MIN_LP_LOCK_DURATION }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STAKING INTEGRATION CONSTANTS (public getters)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // Staking admin destination constants
+    public fun staking_admin_dest_creator(): u8 { STAKING_ADMIN_DEST_CREATOR }
+    public fun staking_admin_dest_dao(): u8 { STAKING_ADMIN_DEST_DAO }
+    public fun staking_admin_dest_platform(): u8 { STAKING_ADMIN_DEST_PLATFORM }
+
+    // Staking reward type constants
+    public fun staking_reward_same_token(): u8 { STAKING_REWARD_SAME_TOKEN }
+    public fun staking_reward_sui(): u8 { STAKING_REWARD_SUI }
+    public fun staking_reward_custom(): u8 { STAKING_REWARD_CUSTOM }
+
+    // Staking limits
+    public fun max_staking_reward_bps(): u64 { MAX_STAKING_REWARD_BPS }
+    public fun max_staking_duration_ms(): u64 { MAX_STAKING_DURATION_MS }
+    public fun min_staking_duration_ms(): u64 { MIN_STAKING_DURATION_MS }
+    public fun max_min_stake_duration_ms(): u64 { MAX_MIN_STAKE_DURATION_MS }
+    public fun max_stake_fee_bps(): u64 { MAX_STAKE_FEE_BPS }
 }

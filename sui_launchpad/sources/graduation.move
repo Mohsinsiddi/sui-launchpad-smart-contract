@@ -42,6 +42,8 @@ module sui_launchpad::graduation {
     const EInsufficientLiquidity: u64 = 403;
     const EInvalidDexType: u64 = 404;
     const EInvalidLPAmount: u64 = 405;
+    const EStakingTokensAlreadyExtracted: u64 = 406;
+    const EStakingNotEnabled: u64 = 407;
 
     // ═══════════════════════════════════════════════════════════════════════
     // CONSTANTS
@@ -92,6 +94,27 @@ module sui_launchpad::graduation {
         dao_vesting_ms: u64,           // If destination = vest
     }
 
+    /// Configuration for staking pool creation at graduation
+    /// Passed via PendingGraduation to PTB for staking pool setup
+    public struct StakingConfig has copy, drop, store {
+        /// Whether staking is enabled for this graduation
+        enabled: bool,
+        /// Duration of the staking reward period (in ms)
+        duration_ms: u64,
+        /// Minimum stake duration before withdrawal (in ms)
+        min_stake_duration_ms: u64,
+        /// Early unstake fee in basis points
+        early_unstake_fee_bps: u64,
+        /// Fee on staking in basis points
+        stake_fee_bps: u64,
+        /// Fee on unstaking in basis points
+        unstake_fee_bps: u64,
+        /// Who receives the PoolAdminCap (0=creator, 1=dao, 2=platform)
+        admin_destination: u8,
+        /// Type of reward token (0=same_token, 1=sui, 2=custom)
+        reward_type: u8,
+    }
+
     /// Pending graduation - hot potato that must be consumed
     /// DEX adapter takes this and creates liquidity pool
     public struct PendingGraduation<phantom T> {
@@ -103,6 +126,9 @@ module sui_launchpad::graduation {
         // LP distribution info
         creator: address,
         lp_distribution: LPDistributionConfig,
+        // Staking integration
+        staking_balance: Balance<T>,
+        staking_config: StakingConfig,
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -156,7 +182,16 @@ module sui_launchpad::graduation {
         // Calculate token allocations at graduation
         let creator_tokens = math::bps(total_tokens, config::creator_graduation_bps(config));
         let platform_tokens = math::bps(total_tokens, config::platform_graduation_bps(config));
-        let _tokens_for_liquidity = total_tokens - creator_tokens - platform_tokens;
+
+        // Calculate staking allocation (if enabled)
+        let staking_enabled = config::staking_enabled(config);
+        let staking_tokens = if (staking_enabled) {
+            math::bps(total_tokens, config::staking_reward_bps(config))
+        } else {
+            0
+        };
+
+        let _tokens_for_liquidity = total_tokens - creator_tokens - platform_tokens - staking_tokens;
 
         // Mark pool as graduated
         bonding_curve::set_graduated(pool);
@@ -195,6 +230,25 @@ module sui_launchpad::graduation {
             );
         };
 
+        // Split staking tokens (kept in PendingGraduation for later extraction)
+        let staking_balance = if (staking_tokens > 0) {
+            balance::split(&mut token_balance, staking_tokens)
+        } else {
+            balance::zero<T>()
+        };
+
+        // Build staking config from LaunchpadConfig
+        let staking_config = StakingConfig {
+            enabled: staking_enabled,
+            duration_ms: config::staking_duration_ms(config),
+            min_stake_duration_ms: config::staking_min_duration_ms(config),
+            early_unstake_fee_bps: config::staking_early_fee_bps(config),
+            stake_fee_bps: config::staking_stake_fee_bps(config),
+            unstake_fee_bps: config::staking_unstake_fee_bps(config),
+            admin_destination: config::staking_admin_destination(config),
+            reward_type: config::staking_reward_type(config),
+        };
+
         // Build LP distribution config for DEX adapter
         // Distribution: Creator (vested) + Protocol (direct) + DAO (remainder)
         let lp_distribution = LPDistributionConfig {
@@ -225,6 +279,8 @@ module sui_launchpad::graduation {
             dex_type,
             creator,
             lp_distribution,
+            staking_balance,
+            staking_config,
         }
     }
 
@@ -253,6 +309,8 @@ module sui_launchpad::graduation {
             dex_type,
             creator: _,
             lp_distribution,
+            staking_balance,
+            staking_config: _,
         } = pending;
 
         let sui_amount = balance::value(&sui_balance);
@@ -263,6 +321,8 @@ module sui_launchpad::graduation {
         // If not zero, destroy remaining (edge case)
         balance::destroy_zero(sui_balance);
         balance::destroy_zero(token_balance);
+        // Staking balance should have been extracted if enabled
+        balance::destroy_zero(staking_balance);
 
         // Record graduation in registry
         registry::record_graduation(registry, pool_id, dex_type, dex_pool_id);
@@ -322,9 +382,14 @@ module sui_launchpad::graduation {
             dex_type,
             creator: _,
             lp_distribution,
+            staking_balance,
+            staking_config: _,
         } = pending;
 
         let timestamp = clock.timestamp_ms();
+
+        // Staking balance should have been extracted if enabled
+        balance::destroy_zero(staking_balance);
 
         // Handle remaining SUI (send to sender)
         let sui_remaining = balance::value(&sui_balance);
@@ -451,6 +516,50 @@ module sui_launchpad::graduation {
     public fun pending_creator<T>(pending: &PendingGraduation<T>): address {
         pending.creator
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STAKING INTEGRATION ACCESSORS (for PTB staking pool creation)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Get staking config from pending graduation
+    public fun pending_staking_config<T>(pending: &PendingGraduation<T>): &StakingConfig {
+        &pending.staking_config
+    }
+
+    /// Get staking token amount available
+    public fun pending_staking_amount<T>(pending: &PendingGraduation<T>): u64 {
+        balance::value(&pending.staking_balance)
+    }
+
+    /// Check if staking is enabled for this graduation
+    public fun pending_staking_enabled<T>(pending: &PendingGraduation<T>): bool {
+        pending.staking_config.enabled
+    }
+
+    /// Extract staking tokens for staking pool creation
+    /// Called by PTB to get tokens to fund the staking pool
+    public fun extract_staking_tokens<T>(
+        pending: &mut PendingGraduation<T>,
+        ctx: &mut TxContext
+    ): Coin<T> {
+        assert!(pending.staking_config.enabled, EStakingNotEnabled);
+        let amount = balance::value(&pending.staking_balance);
+        assert!(amount > 0, EStakingTokensAlreadyExtracted);
+        coin::from_balance(balance::split(&mut pending.staking_balance, amount), ctx)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STAKING CONFIG GETTERS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    public fun staking_config_enabled(c: &StakingConfig): bool { c.enabled }
+    public fun staking_config_duration_ms(c: &StakingConfig): u64 { c.duration_ms }
+    public fun staking_config_min_stake_duration_ms(c: &StakingConfig): u64 { c.min_stake_duration_ms }
+    public fun staking_config_early_unstake_fee_bps(c: &StakingConfig): u64 { c.early_unstake_fee_bps }
+    public fun staking_config_stake_fee_bps(c: &StakingConfig): u64 { c.stake_fee_bps }
+    public fun staking_config_unstake_fee_bps(c: &StakingConfig): u64 { c.unstake_fee_bps }
+    public fun staking_config_admin_destination(c: &StakingConfig): u8 { c.admin_destination }
+    public fun staking_config_reward_type(c: &StakingConfig): u8 { c.reward_type }
 
     // ═══════════════════════════════════════════════════════════════════════
     // LP/POSITION SPLITTING (PTB calls this, then handles vesting separately)
@@ -600,10 +709,13 @@ module sui_launchpad::graduation {
             dex_type: _,
             creator: _,
             lp_distribution: _,
+            staking_balance,
+            staking_config: _,
         } = pending;
 
         balance::destroy_for_testing(sui_balance);
         balance::destroy_for_testing(token_balance);
+        balance::destroy_for_testing(staking_balance);
     }
 
     #[test_only]

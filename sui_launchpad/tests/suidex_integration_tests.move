@@ -540,6 +540,15 @@ module sui_launchpad::suidex_integration_tests {
             let sui_coin = graduation::extract_all_sui(&mut pending, ts::ctx(&mut scenario));
             let token_coin = graduation::extract_all_tokens(&mut pending, ts::ctx(&mut scenario));
 
+            // Extract staking tokens (if staking is enabled, which it is by default)
+            // In a real PTB, these would be used to create a staking pool
+            if (graduation::pending_staking_enabled(&pending)) {
+                let staking_tokens = graduation::extract_staking_tokens(&mut pending, ts::ctx(&mut scenario));
+                // In real scenario: use to fund staking pool via sui_staking::factory::create_pool_free
+                // For test: just transfer to admin (or burn)
+                transfer::public_transfer(staking_tokens, admin());
+            };
+
             let sui_amount = coin::value(&sui_coin);
             let token_amount = coin::value(&token_coin);
 

@@ -103,8 +103,9 @@ PHASE 8: MAINNET LAUNCH
 | └ Events | `events.move` | ✅ DONE | ~247 | All event definitions |
 | └ Bonding Curve | `bonding_curve.move` | ✅ DONE | ~580 | Pool, buy, sell, treasury freeze |
 | └ Registry | `registry.move` | ✅ DONE | ~251 | Token registration |
-| └ Graduation | `graduation.move` | ✅ DONE | ~623 | DEX migration + LP distribution |
+| └ Graduation | `graduation.move` | ✅ DONE | ~700 | DEX migration + LP distribution + staking |
 | └ Vesting | `vesting.move` | ✅ DONE | ~295 | PTB flow docs + sui_vesting re-exports |
+| └ Staking Integration | `staking_integration.move` | ✅ DONE | ~150 | PTB helpers for sui_staking |
 | └ Launchpad | `launchpad.move` | ✅ DONE | ~405 | Entry points & init |
 | **DEX Adapters** | | | | |
 | └ Cetus | `dex_adapters/cetus.move` | ✅ DONE | ~119 | Cetus CLMM + LP distribution |
@@ -458,6 +459,44 @@ PHASE 8: MAINNET LAUNCH
 ---
 
 ## Changelog
+
+### 2026-01-23 (Staking Integration with Launchpad)
+- **sui_launchpad staking integration:** Graduated tokens now get auto-staking pools
+  - Added 9 staking config fields to `config.move`:
+    - `staking_enabled` (default: true)
+    - `staking_reward_bps` (default: 500 = 5%)
+    - `staking_duration_ms` (default: 365 days)
+    - `staking_min_duration_ms` (default: 7 days)
+    - `staking_early_fee_bps` (default: 500 = 5%)
+    - `staking_stake_fee_bps` (default: 0)
+    - `staking_unstake_fee_bps` (default: 0)
+    - `staking_admin_destination` (default: 0 = creator)
+    - `staking_reward_type` (default: 0 = same token)
+  - Added 18 admin setter/getter functions for staking config
+  - Added `StakingConfig` struct to `graduation.move`
+  - Modified `PendingGraduation` to include `staking_balance` and `staking_config`
+  - Token allocation at graduation now reserves tokens for staking rewards
+  - Created `staking_integration.move` module with PTB helpers:
+    - `get_staking_pool_params()` - Get all params for create_pool_free
+    - `get_admin_destination()` - Resolve PoolAdminCap recipient
+    - `should_create_staking_pool()` - Check if staking enabled
+    - Constant getters and validation helpers
+  - Created `graduation_staking_tests.move` with tests for:
+    - Config defaults and constants
+    - All config setter functions
+    - Staking allocation calculations
+    - Validation errors
+- **PTB Flow:** Uses Pure PTB Integration (no compile-time dependency)
+  - Launchpad and sui_staking remain separate packages
+  - Staking pool created via PTB calling sui_staking::factory::create_pool_free
+  - Requires both launchpad AdminCap and staking AdminCap
+- **Admin Destinations:**
+  - Creator (0): Creator manages their staking pool
+  - DAO (1): Community-controlled via DAO treasury
+  - Platform (2): Platform operates for creator
+- **Updated documentation:**
+  - LAUNCHPAD.md with staking integration section
+  - STATUS.md with changelog
 
 ### 2026-01-23 (Vesting Integration Complete)
 - **sui_vesting package:** 65 tests passing (+14 strict tests)
