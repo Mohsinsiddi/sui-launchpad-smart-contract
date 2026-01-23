@@ -1,24 +1,73 @@
 /// Staking Integration Module
 /// Provides helper functions for PTB-based staking pool creation at graduation
 ///
-/// This module facilitates the integration between sui_launchpad and sui_staking
-/// without creating a compile-time dependency. The actual staking pool creation
-/// is done via PTB (Programmable Transaction Block) calling sui_staking directly.
+/// This module facilitates the integration between sui_launchpad and sui_staking.
+/// At graduation, tokens reserved for staking rewards are used to create a staking pool
+/// where token holders can stake their tokens and earn rewards.
 ///
-/// PTB Flow for Graduation with Staking:
-/// ─────────────────────────────────────
-/// 1. initiate_graduation<T>() → PendingGraduation<T> (includes staking reserve)
-/// 2. extract_staking_tokens<T>(&mut pending) → Coin<T> (reward tokens)
-/// 3. Create DEX pool (Cetus/SuiDex/etc) → LP tokens
-/// 4. sui_staking::factory::create_pool_free<T, T>() → PoolAdminCap
-/// 5. Transfer PoolAdminCap to destination (creator/dao/platform)
-/// 6. split_lp_tokens() → (creator_lp, protocol_lp, dao_lp)
-/// 7. Vest creator LP (sui_vesting)
-/// 8. complete_graduation()
+/// ═══════════════════════════════════════════════════════════════════════════════
+/// COMPLETE PTB FLOW FOR GRADUATION + STAKING
+/// ═══════════════════════════════════════════════════════════════════════════════
+///
+/// Required Capabilities:
+/// - Launchpad AdminCap (for graduation)
+/// - Staking AdminCap (for create_pool_free - no setup fee)
+///
+/// ```
+/// // STEP 1: Initiate graduation
+/// let mut pending = graduation::initiate_graduation<T>(...);
+///
+/// // STEP 2: Extract all balances
+/// let sui_coin = graduation::extract_all_sui(&mut pending, ctx);
+/// let token_coin = graduation::extract_all_tokens(&mut pending, ctx);
+/// let staking_coin = graduation::extract_staking_tokens(&mut pending, ctx);
+///
+/// // STEP 3: Get staking parameters
+/// let (start_time, duration, min_stake, early_fee, stake_fee, unstake_fee) =
+///     staking_integration::get_staking_pool_params(&pending, clock.timestamp_ms());
+///
+/// // STEP 4: Create DEX liquidity pool
+/// let lp_coin = dex::add_liquidity(token_coin, sui_coin, ...);
+///
+/// // STEP 5: Create staking pool with extracted tokens
+/// let pool_admin_cap = sui_staking::factory::create_pool_free<T, T>(
+///     staking_registry,
+///     staking_admin_cap,
+///     staking_coin,
+///     start_time,
+///     duration,
+///     min_stake,
+///     early_fee,
+///     stake_fee,
+///     unstake_fee,
+///     clock,
+///     ctx
+/// );
+///
+/// // STEP 6: Transfer PoolAdminCap to appropriate destination
+/// let admin_dest = staking_integration::get_admin_destination(&pending, &config);
+/// transfer::public_transfer(pool_admin_cap, admin_dest);
+///
+/// // STEP 7: Split and distribute LP tokens
+/// let (creator_lp, protocol_lp, dao_lp) = graduation::split_lp_tokens(&pending, lp_coin, ctx);
+/// // ... vest creator_lp, transfer protocol_lp, handle dao_lp
+///
+/// // STEP 8: Complete graduation (validates all balances are zero)
+/// let receipt = graduation::complete_graduation(pending, registry, ...);
+/// ```
+///
+/// ═══════════════════════════════════════════════════════════════════════════════
 module sui_launchpad::staking_integration {
 
+    use sui::clock::Clock;
+    use sui::coin::Coin;
+
     use sui_launchpad::config::{Self, LaunchpadConfig};
-    use sui_launchpad::graduation::{Self, PendingGraduation, StakingConfig};
+    use sui_launchpad::graduation::{Self, PendingGraduation};
+
+    // Re-export sui_staking types for convenience
+    use sui_staking::factory::{Self, StakingRegistry};
+    use sui_staking::access::{AdminCap as StakingAdminCap, PoolAdminCap};
 
     // ═══════════════════════════════════════════════════════════════════════
     // CONSTANTS - Admin Destinations
@@ -45,6 +94,39 @@ module sui_launchpad::staking_integration {
 
     /// Custom reward token (requires separate configuration)
     const REWARD_CUSTOM: u8 = 2;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STAKING POOL CREATION (for PTB)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Create a staking pool for the graduated token using extracted staking tokens
+    /// This is the main integration function called during graduation PTB
+    ///
+    /// T = The graduated token type (both stake and reward token for same-token rewards)
+    public fun create_staking_pool<T>(
+        staking_registry: &mut StakingRegistry,
+        staking_admin_cap: &StakingAdminCap,
+        pending: &PendingGraduation<T>,
+        reward_coins: Coin<T>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): PoolAdminCap {
+        let staking_config = graduation::pending_staking_config(pending);
+
+        factory::create_pool_free<T, T>(
+            staking_registry,
+            staking_admin_cap,
+            reward_coins,
+            clock.timestamp_ms(), // start immediately
+            graduation::staking_config_duration_ms(staking_config),
+            graduation::staking_config_min_stake_duration_ms(staking_config),
+            graduation::staking_config_early_unstake_fee_bps(staking_config),
+            graduation::staking_config_stake_fee_bps(staking_config),
+            graduation::staking_config_unstake_fee_bps(staking_config),
+            clock,
+            ctx,
+        )
+    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // HELPER FUNCTIONS FOR PTB
@@ -141,5 +223,21 @@ module sui_launchpad::staking_integration {
     /// Validate reward type value
     public fun is_valid_reward_type(reward_type: u8): bool {
         reward_type <= REWARD_CUSTOM
+    }
+
+    /// Validate that staking can be created for this graduation
+    /// Checks: staking enabled, same-token rewards, sufficient balance
+    public fun validate_staking_setup<T>(pending: &PendingGraduation<T>): bool {
+        if (!graduation::pending_staking_enabled(pending)) {
+            return false
+        };
+
+        // For now, only same-token rewards are supported in automatic graduation
+        if (!is_same_token_reward(pending)) {
+            return false
+        };
+
+        // Must have tokens to stake
+        graduation::pending_staking_amount(pending) > 0
     }
 }

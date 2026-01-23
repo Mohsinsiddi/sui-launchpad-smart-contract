@@ -6,9 +6,10 @@ edition = "2024"
 # Sui framework is auto-resolved in Sui CLI 1.63+
 [dependencies]
 # ═══════════════════════════════════════════════════════════════════════════════
-# VESTING DEPENDENCY
+# CORE DEPENDENCIES (for graduation integrations)
 # ═══════════════════════════════════════════════════════════════════════════════
 sui_vesting = { local = "../sui_vesting" }
+sui_staking = { local = "../sui_staking" }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DEX DEPENDENCIES FOR GRADUATION

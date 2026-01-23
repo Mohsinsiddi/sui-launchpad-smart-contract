@@ -44,6 +44,9 @@ module sui_launchpad::graduation {
     const EInvalidLPAmount: u64 = 405;
     const EStakingTokensAlreadyExtracted: u64 = 406;
     const EStakingNotEnabled: u64 = 407;
+    const EStakingTokensNotExtracted: u64 = 408;
+    const ESuiNotExtracted: u64 = 409;
+    const ETokensNotExtracted: u64 = 410;
 
     // ═══════════════════════════════════════════════════════════════════════
     // CONSTANTS
@@ -315,13 +318,20 @@ module sui_launchpad::graduation {
 
         let sui_amount = balance::value(&sui_balance);
         let token_amount = balance::value(&token_balance);
+        let staking_amount = balance::value(&staking_balance);
         let timestamp = clock.timestamp_ms();
 
-        // Balances should be zero after DEX adapter consumed them
-        // If not zero, destroy remaining (edge case)
+        // STRICT VALIDATION: All balances MUST be zero
+        // SUI must be extracted and used for DEX liquidity
+        assert!(sui_amount == 0, ESuiNotExtracted);
+        // Tokens must be extracted and used for DEX liquidity
+        assert!(token_amount == 0, ETokensNotExtracted);
+        // Staking tokens must be extracted if staking was enabled
+        assert!(staking_amount == 0, EStakingTokensNotExtracted);
+
+        // Destroy empty balances
         balance::destroy_zero(sui_balance);
         balance::destroy_zero(token_balance);
-        // Staking balance should have been extracted if enabled
         balance::destroy_zero(staking_balance);
 
         // Record graduation in registry
@@ -388,7 +398,9 @@ module sui_launchpad::graduation {
 
         let timestamp = clock.timestamp_ms();
 
-        // Staking balance should have been extracted if enabled
+        // STRICT VALIDATION: Staking tokens MUST be extracted (no remainder allowed)
+        let staking_amount = balance::value(&staking_balance);
+        assert!(staking_amount == 0, EStakingTokensNotExtracted);
         balance::destroy_zero(staking_balance);
 
         // Handle remaining SUI (send to sender)
