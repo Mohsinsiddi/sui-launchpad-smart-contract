@@ -5,6 +5,20 @@ edition = "2024"
 
 # Sui framework is auto-resolved in Sui CLI 1.63+
 [dependencies]
+# ═══════════════════════════════════════════════════════════════════════════════
+# DEX DEPENDENCIES FOR GRADUATION
+# ═══════════════════════════════════════════════════════════════════════════════
+# DEX repos cloned in ../dex_repos/
+
+# SuiDex v2 - AMM (returns LP tokens)
+suitrump_dex = { local = "../dex_repos/suidex-v2" }
+
+# Cetus CLMM - Concentrated Liquidity (returns Position NFT)
+CetusClmm = { local = "../dex_repos/cetus-contracts/packages/cetus_clmm" }
+
+# FlowX CLMM - Concentrated Liquidity (returns Position NFT)
+flowx_clmm = { local = "../dex_repos/clmm-contracts" }
+# ═══════════════════════════════════════════════════════════════════════════════
 
 [addresses]
 sui_launchpad = "0x0"

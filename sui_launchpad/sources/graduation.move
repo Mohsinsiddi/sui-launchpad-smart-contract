@@ -621,4 +621,46 @@ module sui_launchpad::graduation {
     public fun receipt_creator_lp_tokens(receipt: &GraduationReceipt): u64 { receipt.creator_lp_tokens }
     public fun receipt_community_lp_tokens(receipt: &GraduationReceipt): u64 { receipt.community_lp_tokens }
     public fun receipt_community_lp_destination(receipt: &GraduationReceipt): u8 { receipt.community_lp_destination }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // TEST HELPERS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test_only]
+    /// Destroy PendingGraduation for testing (consumes the hot potato)
+    public fun destroy_pending_for_testing<T>(pending: PendingGraduation<T>) {
+        let PendingGraduation {
+            pool_id: _,
+            sui_balance,
+            token_balance,
+            graduation_fee: _,
+            dex_type: _,
+            creator: _,
+            lp_distribution: _,
+        } = pending;
+
+        balance::destroy_for_testing(sui_balance);
+        balance::destroy_for_testing(token_balance);
+    }
+
+    #[test_only]
+    /// Destroy GraduationReceipt for testing
+    public fun destroy_receipt_for_testing(receipt: GraduationReceipt) {
+        let GraduationReceipt {
+            id,
+            pool_id: _,
+            dex_type: _,
+            dex_pool_id: _,
+            sui_to_liquidity: _,
+            tokens_to_liquidity: _,
+            graduation_fee: _,
+            graduated_at: _,
+            total_lp_tokens: _,
+            creator_lp_tokens: _,
+            community_lp_tokens: _,
+            community_lp_destination: _,
+        } = receipt;
+
+        object::delete(id);
+    }
 }

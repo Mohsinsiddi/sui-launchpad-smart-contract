@@ -167,18 +167,40 @@ module sui_launchpad::launchpad {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // GRADUATION ENTRY POINTS
+    // GRADUATION ENTRY POINTS - TWO PHASE PATTERN
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // Graduation follows a two-phase pattern for flexibility with different DEXes:
+    //
+    // Phase 1: Extract
+    //   - Call `initiate_graduation_to_*()` to get PendingGraduation + coins
+    //   - This locks the pool and extracts liquidity
+    //
+    // Phase 2: Complete (in a PTB with DEX calls)
+    //   - Use the coins to create DEX pool (call DEX directly)
+    //   - Call `complete_graduation_*()` with the pool ID
+    //
+    // Example PTB flow:
+    //   1. launchpad::initiate_graduation_to_cetus() → (pending, sui, tokens)
+    //   2. cetus::create_pool() → pool_id
+    //   3. cetus::add_liquidity() → position
+    //   4. launchpad::complete_graduation_cetus(pending, pool_id, ...)
     // ═══════════════════════════════════════════════════════════════════════
 
-    /// Graduate token to Cetus
-    public fun graduate_to_cetus<T>(
+    use sui_launchpad::graduation::PendingGraduation;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // PHASE 1: INITIATE GRADUATION (Extract coins)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Initiate graduation to Cetus - Phase 1
+    /// Returns PendingGraduation and extracted coins for DEX pool creation
+    public fun initiate_graduation_to_cetus<T>(
         admin: &AdminCap,
         pool: &mut BondingPool<T>,
         config: &LaunchpadConfig,
-        registry: &mut Registry,
-        clock: &Clock,
         ctx: &mut TxContext,
-    ): GraduationReceipt {
+    ): (PendingGraduation<T>, Coin<SUI>, Coin<T>) {
         use sui_launchpad::cetus_adapter;
 
         let pending = graduation::initiate_graduation(
@@ -189,30 +211,17 @@ module sui_launchpad::launchpad {
             ctx,
         );
 
-        let (receipt, sui_coin, token_coin) = cetus_adapter::graduate_to_cetus(
-            pending,
-            config,
-            registry,
-            clock,
-            ctx,
-        );
-
-        // Handle remaining coins (in production, these would be LP tokens)
-        transfer::public_transfer(sui_coin, config::treasury(config));
-        transfer::public_transfer(token_coin, config::treasury(config));
-
-        receipt
+        cetus_adapter::graduate_to_cetus_extract(pending, config, ctx)
     }
 
-    /// Graduate token to Turbos
-    public fun graduate_to_turbos<T>(
+    /// Initiate graduation to Turbos - Phase 1
+    /// Returns PendingGraduation and extracted coins for DEX pool creation
+    public fun initiate_graduation_to_turbos<T>(
         admin: &AdminCap,
         pool: &mut BondingPool<T>,
         config: &LaunchpadConfig,
-        registry: &mut Registry,
-        clock: &Clock,
         ctx: &mut TxContext,
-    ): GraduationReceipt {
+    ): (PendingGraduation<T>, Coin<SUI>, Coin<T>) {
         use sui_launchpad::turbos_adapter;
 
         let pending = graduation::initiate_graduation(
@@ -223,29 +232,17 @@ module sui_launchpad::launchpad {
             ctx,
         );
 
-        let (receipt, sui_coin, token_coin) = turbos_adapter::graduate_to_turbos(
-            pending,
-            config,
-            registry,
-            clock,
-            ctx,
-        );
-
-        transfer::public_transfer(sui_coin, config::treasury(config));
-        transfer::public_transfer(token_coin, config::treasury(config));
-
-        receipt
+        turbos_adapter::graduate_to_turbos_extract(pending, config, ctx)
     }
 
-    /// Graduate token to FlowX
-    public fun graduate_to_flowx<T>(
+    /// Initiate graduation to FlowX - Phase 1
+    /// Returns PendingGraduation and extracted coins for DEX pool creation
+    public fun initiate_graduation_to_flowx<T>(
         admin: &AdminCap,
         pool: &mut BondingPool<T>,
         config: &LaunchpadConfig,
-        registry: &mut Registry,
-        clock: &Clock,
         ctx: &mut TxContext,
-    ): GraduationReceipt {
+    ): (PendingGraduation<T>, Coin<SUI>, Coin<T>) {
         use sui_launchpad::flowx_adapter;
 
         let pending = graduation::initiate_graduation(
@@ -256,29 +253,17 @@ module sui_launchpad::launchpad {
             ctx,
         );
 
-        let (receipt, sui_coin, token_coin) = flowx_adapter::graduate_to_flowx(
-            pending,
-            config,
-            registry,
-            clock,
-            ctx,
-        );
-
-        transfer::public_transfer(sui_coin, config::treasury(config));
-        transfer::public_transfer(token_coin, config::treasury(config));
-
-        receipt
+        flowx_adapter::graduate_to_flowx_extract(pending, config, ctx)
     }
 
-    /// Graduate token to SuiDex
-    public fun graduate_to_suidex<T>(
+    /// Initiate graduation to SuiDex - Phase 1
+    /// Returns PendingGraduation and extracted coins for DEX pool creation
+    public fun initiate_graduation_to_suidex<T>(
         admin: &AdminCap,
         pool: &mut BondingPool<T>,
         config: &LaunchpadConfig,
-        registry: &mut Registry,
-        clock: &Clock,
         ctx: &mut TxContext,
-    ): GraduationReceipt {
+    ): (PendingGraduation<T>, Coin<SUI>, Coin<T>) {
         use sui_launchpad::suidex_adapter;
 
         let pending = graduation::initiate_graduation(
@@ -289,18 +274,115 @@ module sui_launchpad::launchpad {
             ctx,
         );
 
-        let (receipt, sui_coin, token_coin) = suidex_adapter::graduate_to_suidex(
+        suidex_adapter::graduate_to_suidex_extract(pending, config, ctx)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // PHASE 2: COMPLETE GRADUATION (After DEX pool creation)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Complete graduation to Cetus - Phase 2
+    /// Call after creating Cetus pool and adding liquidity
+    public fun complete_graduation_cetus<T>(
+        pending: PendingGraduation<T>,
+        registry: &mut Registry,
+        dex_pool_id: ID,
+        total_lp_tokens: u64,
+        creator_lp_tokens: u64,
+        community_lp_tokens: u64,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): GraduationReceipt {
+        use sui_launchpad::cetus_adapter;
+
+        cetus_adapter::complete_graduation_manual(
             pending,
-            config,
             registry,
+            dex_pool_id,
+            total_lp_tokens,
+            creator_lp_tokens,
+            community_lp_tokens,
             clock,
             ctx,
-        );
+        )
+    }
 
-        transfer::public_transfer(sui_coin, config::treasury(config));
-        transfer::public_transfer(token_coin, config::treasury(config));
+    /// Complete graduation to Turbos - Phase 2
+    /// Call after creating Turbos pool and adding liquidity
+    public fun complete_graduation_turbos<T>(
+        pending: PendingGraduation<T>,
+        registry: &mut Registry,
+        dex_pool_id: ID,
+        total_lp_tokens: u64,
+        creator_lp_tokens: u64,
+        community_lp_tokens: u64,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): GraduationReceipt {
+        use sui_launchpad::turbos_adapter;
 
-        receipt
+        turbos_adapter::complete_graduation_manual(
+            pending,
+            registry,
+            dex_pool_id,
+            total_lp_tokens,
+            creator_lp_tokens,
+            community_lp_tokens,
+            clock,
+            ctx,
+        )
+    }
+
+    /// Complete graduation to FlowX - Phase 2
+    /// Call after creating FlowX pool and adding liquidity
+    public fun complete_graduation_flowx<T>(
+        pending: PendingGraduation<T>,
+        registry: &mut Registry,
+        dex_pool_id: ID,
+        total_lp_tokens: u64,
+        creator_lp_tokens: u64,
+        community_lp_tokens: u64,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): GraduationReceipt {
+        use sui_launchpad::flowx_adapter;
+
+        flowx_adapter::complete_graduation_manual(
+            pending,
+            registry,
+            dex_pool_id,
+            total_lp_tokens,
+            creator_lp_tokens,
+            community_lp_tokens,
+            clock,
+            ctx,
+        )
+    }
+
+    /// Complete graduation to SuiDex - Phase 2
+    /// Call after creating SuiDex pair and adding liquidity
+    public fun complete_graduation_suidex<T>(
+        pending: PendingGraduation<T>,
+        registry: &mut Registry,
+        dex_pool_id: ID,
+        total_lp_tokens: u64,
+        creator_lp_tokens: u64,
+        community_lp_tokens: u64,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): GraduationReceipt {
+        use sui_launchpad::suidex_adapter;
+
+        suidex_adapter::complete_graduation_manual(
+            pending,
+            registry,
+            dex_pool_id,
+            total_lp_tokens,
+            creator_lp_tokens,
+            community_lp_tokens,
+            clock,
+            ctx,
+        )
     }
 
     // ═══════════════════════════════════════════════════════════════════════
