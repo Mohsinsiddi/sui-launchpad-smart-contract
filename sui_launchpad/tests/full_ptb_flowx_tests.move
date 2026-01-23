@@ -257,6 +257,7 @@ module sui_launchpad::full_ptb_flowx_tests {
                 pending,
                 &mut registry,
                 mock_pool_id,
+                0, 0, // sui_to_liquidity, tokens_to_liquidity
                 1_000_000, 0, 1_000_000,
                 &clock,
                 ts::ctx(&mut scenario),
@@ -513,6 +514,7 @@ module sui_launchpad::full_ptb_flowx_tests {
                 pending,
                 &mut registry,
                 mock_pool_id,
+                0, 0, // sui_to_liquidity, tokens_to_liquidity
                 1_000_000, 0, 1_000_000,
                 &clock,
                 ts::ctx(&mut scenario),

@@ -12,6 +12,13 @@ module sui_launchpad::config {
     /// Maximum fee in basis points (10% = 1000 bps)
     const MAX_FEE_BPS: u64 = 1000;
 
+    /// Minimum creation fee (0.1 SUI = 100_000_000 MIST) - prevents spam attacks
+    const MIN_CREATION_FEE: u64 = 100_000_000;
+
+    /// Maximum total graduation allocation (20% = 2000 bps)
+    /// creator_graduation_bps + platform_graduation_bps + staking_reward_bps <= 2000
+    const MAX_TOTAL_GRADUATION_ALLOCATION_BPS: u64 = 2000;
+
     /// Maximum creator graduation allocation (5% = 500 bps)
     const MAX_CREATOR_GRADUATION_BPS: u64 = 500;
 
@@ -161,6 +168,9 @@ module sui_launchpad::config {
     const EInvalidDAOTimelockDelay: u64 = 119;
     const EInvalidDAOProposalThreshold: u64 = 120;
     const EInvalidDAOAdminDest: u64 = 121;
+    const ECreationFeeTooLow: u64 = 122;
+    const ETotalGraduationAllocationTooHigh: u64 = 123;
+    const EDAOTreasurySameAsPlatform: u64 = 124;
 
     // ═══════════════════════════════════════════════════════════════════════
     // CONFIG STRUCT
@@ -421,12 +431,13 @@ module sui_launchpad::config {
     // ADMIN SETTERS
     // ═══════════════════════════════════════════════════════════════════════
 
-    /// Update creation fee
+    /// Update creation fee (minimum 0.1 SUI to prevent spam)
     public fun set_creation_fee(
         _admin: &AdminCap,
         config: &mut LaunchpadConfig,
         new_fee: u64,
     ) {
+        assert!(new_fee >= MIN_CREATION_FEE, ECreationFeeTooLow);
         let old = config.creation_fee;
         config.creation_fee = new_fee;
         event::emit(ConfigUpdated { field: b"creation_fee", old_value: old, new_value: new_fee });
@@ -492,24 +503,32 @@ module sui_launchpad::config {
     }
 
     /// Update creator graduation allocation (0-5%)
+    /// Total graduation allocation (creator + platform + staking) must not exceed 20%
     public fun set_creator_graduation_bps(
         _admin: &AdminCap,
         config: &mut LaunchpadConfig,
         new_bps: u64,
     ) {
         assert!(new_bps <= MAX_CREATOR_GRADUATION_BPS, EInvalidGraduationAllocation);
+        // Validate total graduation allocation doesn't exceed 20%
+        let total_allocation = new_bps + config.platform_graduation_bps + config.staking_reward_bps;
+        assert!(total_allocation <= MAX_TOTAL_GRADUATION_ALLOCATION_BPS, ETotalGraduationAllocationTooHigh);
         let old = config.creator_graduation_bps;
         config.creator_graduation_bps = new_bps;
         event::emit(ConfigUpdated { field: b"creator_graduation_bps", old_value: old, new_value: new_bps });
     }
 
     /// Update platform graduation allocation (2.5-5%)
+    /// Total graduation allocation (creator + platform + staking) must not exceed 20%
     public fun set_platform_graduation_bps(
         _admin: &AdminCap,
         config: &mut LaunchpadConfig,
         new_bps: u64,
     ) {
         assert!(new_bps >= MIN_PLATFORM_GRADUATION_BPS && new_bps <= MAX_PLATFORM_GRADUATION_BPS, EInvalidGraduationAllocation);
+        // Validate total graduation allocation doesn't exceed 20%
+        let total_allocation = config.creator_graduation_bps + new_bps + config.staking_reward_bps;
+        assert!(total_allocation <= MAX_TOTAL_GRADUATION_ALLOCATION_BPS, ETotalGraduationAllocationTooHigh);
         let old = config.platform_graduation_bps;
         config.platform_graduation_bps = new_bps;
         event::emit(ConfigUpdated { field: b"platform_graduation_bps", old_value: old, new_value: new_bps });
@@ -696,12 +715,16 @@ module sui_launchpad::config {
     }
 
     /// Set staking reward percentage (0-10% of token supply)
+    /// Total graduation allocation (creator + platform + staking) must not exceed 20%
     public fun set_staking_reward_bps(
         _admin: &AdminCap,
         config: &mut LaunchpadConfig,
         new_bps: u64,
     ) {
         assert!(new_bps <= MAX_STAKING_REWARD_BPS, EStakingRewardTooHigh);
+        // Validate total graduation allocation doesn't exceed 20%
+        let total_allocation = config.creator_graduation_bps + config.platform_graduation_bps + new_bps;
+        assert!(total_allocation <= MAX_TOTAL_GRADUATION_ALLOCATION_BPS, ETotalGraduationAllocationTooHigh);
         let old = config.staking_reward_bps;
         config.staking_reward_bps = new_bps;
         event::emit(ConfigUpdated { field: b"staking_reward_bps", old_value: old, new_value: new_bps });
@@ -1027,6 +1050,8 @@ module sui_launchpad::config {
 
     public fun max_creator_lp_bps(): u64 { MAX_CREATOR_LP_BPS }
     public fun min_lp_lock_duration(): u64 { MIN_LP_LOCK_DURATION }
+    public fun min_creation_fee(): u64 { MIN_CREATION_FEE }
+    public fun max_total_graduation_allocation_bps(): u64 { MAX_TOTAL_GRADUATION_ALLOCATION_BPS }
 
     // ═══════════════════════════════════════════════════════════════════════
     // STAKING INTEGRATION CONSTANTS (public getters)

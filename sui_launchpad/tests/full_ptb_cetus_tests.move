@@ -261,6 +261,8 @@ module sui_launchpad::full_ptb_cetus_tests {
                 pending,
                 &mut registry,
                 mock_pool_id,
+                0, // sui_to_liquidity
+                0, // tokens_to_liquidity
                 1_000_000, // total LP (represented by position liquidity)
                 0, // creator LP (for NFT, creator gets vested position separately)
                 1_000_000, // DAO LP (entire position in this case)
@@ -598,6 +600,7 @@ module sui_launchpad::full_ptb_cetus_tests {
                 pending,
                 &mut registry,
                 mock_pool_id,
+                0, 0, // sui_to_liquidity, tokens_to_liquidity
                 1_000_000, 0, 1_000_000,
                 &clock,
                 ts::ctx(&mut scenario),

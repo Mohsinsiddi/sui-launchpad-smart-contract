@@ -507,6 +507,7 @@ module sui_launchpad::dao_security_tests {
                 pending,
                 &mut registry,
                 object::id_from_address(@0x123),
+                0, 0, // sui_to_liquidity, tokens_to_liquidity
                 1000000, 25000, 950000,
                 &clock,
                 ts::ctx(&mut scenario),

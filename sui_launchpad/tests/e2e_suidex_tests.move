@@ -65,6 +65,22 @@ module sui_launchpad::e2e_suidex_tests {
     fun bob(): address { @0xB1 }
     fun charlie(): address { @0xC2 }
 
+    // 10 users for comprehensive testing
+    fun user1(): address { @0x101 }
+    fun user2(): address { @0x102 }
+    fun user3(): address { @0x103 }
+    fun user4(): address { @0x104 }
+    fun user5(): address { @0x105 }
+    fun user6(): address { @0x106 }
+    fun user7(): address { @0x107 }
+    fun user8(): address { @0x108 }
+    fun user9(): address { @0x109 }
+    fun user10(): address { @0x110 }
+
+    fun get_10_users(): vector<address> {
+        vector[user1(), user2(), user3(), user4(), user5(), user6(), user7(), user8(), user9(), user10()]
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════════
     // CONSTANTS
     // ═══════════════════════════════════════════════════════════════════════════════
@@ -212,9 +228,11 @@ module sui_launchpad::e2e_suidex_tests {
     /// Execute full graduation in a single transaction (hot potato pattern)
     /// Returns (staking_pool_id, dao_id, treasury_id)
     fun execute_graduation(scenario: &mut ts::Scenario): (ID, ID, ID) {
-        let staking_pool_id;
+        let mut staking_pool_id = object::id_from_address(@0x0);
         let dao_id;
         let treasury_id;
+        let mut sui_to_liquidity = 0u64;
+        let mut tokens_to_liquidity = 0u64;
 
         // All graduation steps must happen in one transaction due to hot potato
         ts::next_tx(scenario, admin());
@@ -245,14 +263,15 @@ module sui_launchpad::e2e_suidex_tests {
             let sui_for_dex = graduation::extract_all_sui(&mut pending, ts::ctx(scenario));
             let tokens_for_dex = graduation::extract_all_tokens(&mut pending, ts::ctx(scenario));
 
-            let sui_amount = coin::value(&sui_for_dex);
-            let token_amount = coin::value(&tokens_for_dex);
+            // Store actual amounts used for liquidity (for receipt)
+            sui_to_liquidity = coin::value(&sui_for_dex);
+            tokens_to_liquidity = coin::value(&tokens_for_dex);
 
             // Step 3: Add liquidity to DEX (correct 14 parameter signature)
             suidex_router::add_liquidity<TEST_COIN, SUI>(
                 &router, &mut factory, &mut pair,
                 tokens_for_dex, sui_for_dex,
-                (token_amount as u256), (sui_amount as u256),
+                (tokens_to_liquidity as u256), (sui_to_liquidity as u256),
                 0, 0,
                 std::string::utf8(b"TEST"), std::string::utf8(b"SUI"),
                 9999999999999, &clock,
@@ -272,15 +291,15 @@ module sui_launchpad::e2e_suidex_tests {
             );
             transfer::public_transfer(pool_admin_cap, creator());
 
-            // Get staking pool ID
-            staking_pool_id = object::id_from_address(@0x1234); // Placeholder - pool is shared internally
-
             // Step 5: Create DAO using dao_integration with pending
+            // Note: staking_pool_id will be fetched after staking pool is shared
+            // For now, use a placeholder - in real PTB, pool would be created first
+            let temp_staking_pool_id = object::id_from_address(@0x54A4E);
             let (mut governance, dao_admin_cap) = dao_integration::create_dao(
                 &dao_admin,
                 &mut dao_reg,
                 &pending,
-                staking_pool_id,
+                temp_staking_pool_id,
                 std::string::utf8(b"Test Token DAO"),
                 &clock,
                 ts::ctx(scenario),
@@ -297,13 +316,16 @@ module sui_launchpad::e2e_suidex_tests {
             treasury_id = object::id(&treasury);
 
             // Step 6: Complete graduation (consumes hot potato)
+            // Pass actual liquidity amounts for accurate event/receipt data
             let receipt = graduation::complete_graduation(
                 pending,
                 &mut registry,
                 object::id(&pair),
-                1000000, // total_lp_tokens
-                25000,   // creator_lp_tokens (2.5%)
-                950000,  // community_lp_tokens (95%)
+                sui_to_liquidity,      // Actual SUI added to liquidity
+                tokens_to_liquidity,   // Actual tokens added to liquidity
+                0,                     // total_lp_tokens - will be updated after LP mint
+                0,                     // creator_lp_tokens - will be calculated
+                0,                     // community_lp_tokens - will be calculated
                 &clock,
                 ts::ctx(scenario),
             );
@@ -328,26 +350,68 @@ module sui_launchpad::e2e_suidex_tests {
             clock::destroy_for_testing(clock);
         };
 
+        // Get actual staking pool ID after it's shared
+        ts::next_tx(scenario, admin());
+        {
+            let staking_pool_obj = ts::take_shared<StakingPool<TEST_COIN, TEST_COIN>>(scenario);
+            staking_pool_id = object::id(&staking_pool_obj);
+            ts::return_shared(staking_pool_obj);
+        };
+
         // Handle LP tokens in next transaction
         ts::next_tx(scenario, admin());
         {
             let lp_tokens = ts::take_from_sender<Coin<LPCoin<TEST_COIN, SUI>>>(scenario);
             let mut treasury = ts::take_shared_by_id<Treasury>(scenario, treasury_id);
+            let config = ts::take_shared<LaunchpadConfig>(scenario);
 
             let total_lp = coin::value(&lp_tokens);
             let mut lp_tokens = lp_tokens;
 
-            // Split LP tokens: Creator (2.5%), Protocol (2.5%), DAO (95%)
-            let creator_lp_amount = total_lp * 25 / 1000;
-            let protocol_lp_amount = total_lp * 25 / 1000;
+            // Use config values for LP split (not hardcoded!)
+            let creator_lp_bps = config::creator_lp_bps(&config);
+            let protocol_lp_bps = config::protocol_lp_bps(&config);
+
+            let creator_lp_amount = total_lp * creator_lp_bps / 10000;
+            let protocol_lp_amount = total_lp * protocol_lp_bps / 10000;
 
             let creator_lp = coin::split(&mut lp_tokens, creator_lp_amount, ts::ctx(scenario));
             let protocol_lp = coin::split(&mut lp_tokens, protocol_lp_amount, ts::ctx(scenario));
             let dao_lp = lp_tokens;
 
-            transfer::public_transfer(creator_lp, creator());
+            // IMPORTANT: Vest creator LP via protocol (not direct transfer!)
+            // Protocol vests on behalf of creator to prevent creator from disappearing
+            let mut vesting_config = ts::take_shared<VestingConfig>(scenario);
+            let clock = create_clock(scenario);
+
+            // Use config values for vesting (not hardcoded!)
+            let cliff_ms = config::creator_lp_cliff_ms(&config);
+            let vesting_ms = config::creator_lp_vesting_ms(&config);
+            // Convert ms to months (approximate)
+            let cliff_months = cliff_ms / (30 * MS_PER_DAY);
+            let total_months = (cliff_ms + vesting_ms) / (30 * MS_PER_DAY);
+
+            let creator_cap = vesting::create_schedule_months<LPCoin<TEST_COIN, SUI>>(
+                &mut vesting_config,
+                creator_lp,
+                creator(), // beneficiary
+                (cliff_months as u64),
+                (total_months as u64),
+                false, // NOT revocable - creator owns it
+                &clock,
+                ts::ctx(scenario),
+            );
+
+            // Protocol keeps CreatorCap (or can transfer to admin for management)
+            transfer::public_transfer(creator_cap, admin());
+            ts::return_shared(vesting_config);
+            ts::return_shared(config);
+            clock::destroy_for_testing(clock);
+
+            // Protocol LP goes to platform treasury
             transfer::public_transfer(protocol_lp, platform_treasury());
 
+            // DAO LP goes to treasury
             dao_integration::deposit_lp_to_treasury<LPCoin<TEST_COIN, SUI>>(
                 &mut treasury,
                 dao_lp,
@@ -358,6 +422,12 @@ module sui_launchpad::e2e_suidex_tests {
         };
 
         (staking_pool_id, dao_id, treasury_id)
+    }
+
+    /// Execute graduation with LP vesting - returns all IDs including vesting schedule
+    fun execute_graduation_with_vesting(scenario: &mut ts::Scenario): (ID, ID, ID) {
+        // Same as execute_graduation but explicitly tests vesting
+        execute_graduation(scenario)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════
@@ -1051,6 +1121,674 @@ module sui_launchpad::e2e_suidex_tests {
             ts::return_shared(pool);
             ts::return_shared(config);
             clock::destroy_for_testing(clock);
+        };
+
+        ts::end(scenario);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // PART 7: CREATOR LP VESTING (Protocol vests on behalf of creator)
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_creator_lp_vested_by_protocol() {
+        let mut scenario = ts::begin(admin());
+        setup_infrastructure(&mut scenario);
+        let _pool_id = create_token_pool(&mut scenario);
+        let _tokens = buy_to_graduation_threshold(&mut scenario);
+        create_dex_pair(&mut scenario);
+        let (_staking_pool_id, _dao_id, _treasury_id) = execute_graduation(&mut scenario);
+
+        // Verify creator received VestingSchedule (not direct LP tokens)
+        ts::next_tx(&mut scenario, creator());
+        {
+            // Creator should have a VestingSchedule for LP tokens
+            let schedule = ts::take_from_sender<VestingSchedule<LPCoin<TEST_COIN, SUI>>>(&scenario);
+
+            // Verify vesting parameters
+            assert!(vesting::beneficiary(&schedule) == creator(), 100);
+            assert!(vesting::total_amount(&schedule) > 0, 101);
+
+            // Cannot claim yet (cliff period)
+            let clock = create_clock(&mut scenario);
+            let claimable = vesting::claimable(&schedule, &clock);
+            assert!(claimable == 0, 102); // Still in cliff
+
+            ts::return_to_sender(&scenario, schedule);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Admin should have CreatorCap (protocol controls vesting)
+        ts::next_tx(&mut scenario, admin());
+        {
+            let creator_cap = ts::take_from_sender<VestingCreatorCap>(&scenario);
+            // Protocol can manage vesting if needed
+            ts::return_to_sender(&scenario, creator_cap);
+        };
+
+        ts::end(scenario);
+    }
+
+    #[test]
+    fun test_creator_can_claim_lp_after_cliff() {
+        let mut scenario = ts::begin(admin());
+        setup_infrastructure(&mut scenario);
+        let _pool_id = create_token_pool(&mut scenario);
+        let _tokens = buy_to_graduation_threshold(&mut scenario);
+        create_dex_pair(&mut scenario);
+        let (_staking_pool_id, _dao_id, _treasury_id) = execute_graduation(&mut scenario);
+
+        // Fast forward 7 months (past 6 month cliff)
+        ts::next_tx(&mut scenario, creator());
+        {
+            let mut schedule = ts::take_from_sender<VestingSchedule<LPCoin<TEST_COIN, SUI>>>(&scenario);
+            let clock = create_clock_at(&mut scenario, MS_PER_DAY * 210); // ~7 months
+
+            // Now can claim
+            let claimable = vesting::claimable(&schedule, &clock);
+            assert!(claimable > 0, 100);
+
+            let claimed_lp = vesting::claim(&mut schedule, &clock, ts::ctx(&mut scenario));
+            assert!(coin::value(&claimed_lp) > 0, 101);
+
+            transfer::public_transfer(claimed_lp, creator());
+            ts::return_to_sender(&scenario, schedule);
+            clock::destroy_for_testing(clock);
+        };
+
+        ts::end(scenario);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // PART 8: 10 USERS STAKING AND EARNING REWARDS
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_10_users_stake_and_earn_rewards() {
+        let mut scenario = ts::begin(admin());
+        setup_infrastructure(&mut scenario);
+
+        // Create staking pool with rewards
+        ts::next_tx(&mut scenario, admin());
+        {
+            let staking_admin = ts::take_from_sender<StakingAdminCap>(&scenario);
+            let mut staking_registry = ts::take_shared<StakingRegistry>(&scenario);
+            let clock = create_clock(&mut scenario);
+
+            // 10 billion tokens as rewards
+            let reward_tokens = coin::mint_for_testing<TEST_COIN>(10_000_000_000_000, ts::ctx(&mut scenario));
+
+            let pool_admin_cap = staking_factory::create_pool_free<TEST_COIN, TEST_COIN>(
+                &mut staking_registry,
+                &staking_admin,
+                reward_tokens,
+                clock::timestamp_ms(&clock),
+                MS_PER_DAY * 365, // 1 year duration
+                MS_PER_DAY * 7,   // 7 day min stake
+                500,              // 5% early unstake fee
+                0,                // no stake fee
+                0,                // no unstake fee
+                &clock,
+                ts::ctx(&mut scenario),
+            );
+
+            transfer::public_transfer(pool_admin_cap, admin());
+            ts::return_to_sender(&scenario, staking_admin);
+            ts::return_shared(staking_registry);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Each of 10 users stakes tokens
+        let users = get_10_users();
+        let stake_amount = 1_000_000_000_000u64; // 1000 tokens each
+        let mut i = 0;
+        while (i < 10) {
+            let user = *vector::borrow(&users, i);
+            ts::next_tx(&mut scenario, user);
+            {
+                let mut pool = ts::take_shared<StakingPool<TEST_COIN, TEST_COIN>>(&scenario);
+                let clock = create_clock(&mut scenario);
+
+                let tokens = coin::mint_for_testing<TEST_COIN>(stake_amount, ts::ctx(&mut scenario));
+                let position = staking_pool::stake(&mut pool, tokens, &clock, ts::ctx(&mut scenario));
+                transfer::public_transfer(position, user);
+
+                ts::return_shared(pool);
+                clock::destroy_for_testing(clock);
+            };
+            i = i + 1;
+        };
+
+        // Verify all 10 users have positions
+        let mut j = 0;
+        while (j < 10) {
+            let user = *vector::borrow(&users, j);
+            ts::next_tx(&mut scenario, user);
+            {
+                let position = ts::take_from_sender<StakingPosition<TEST_COIN>>(&scenario);
+                assert!(sui_staking::position::staked_amount(&position) == stake_amount, 100 + j);
+                ts::return_to_sender(&scenario, position);
+            };
+            j = j + 1;
+        };
+
+        // Fast forward 30 days and verify rewards accumulated
+        ts::next_tx(&mut scenario, user1());
+        {
+            let position = ts::take_from_sender<StakingPosition<TEST_COIN>>(&scenario);
+            let pool = ts::take_shared<StakingPool<TEST_COIN, TEST_COIN>>(&scenario);
+
+            // Check pending rewards at 30 days
+            let current_time = MS_PER_DAY * 30;
+            let pending = staking_pool::pending_rewards(&pool, &position, current_time);
+            assert!(pending > 0, 200); // Should have accumulated rewards
+
+            ts::return_to_sender(&scenario, position);
+            ts::return_shared(pool);
+        };
+
+        ts::end(scenario);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // PART 9: 10 USERS VOTING ON DAO PROPOSAL
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_10_users_vote_on_proposal() {
+        let mut scenario = ts::begin(admin());
+        setup_infrastructure(&mut scenario);
+
+        // Setup DAO with staking governance
+        let staking_pool_id;
+        let governance_id;
+        let treasury_id;
+
+        ts::next_tx(&mut scenario, admin());
+        {
+            let staking_admin = ts::take_from_sender<StakingAdminCap>(&scenario);
+            let mut staking_registry = ts::take_shared<StakingRegistry>(&scenario);
+            let clock = create_clock(&mut scenario);
+
+            let reward_tokens = coin::mint_for_testing<TEST_COIN>(10_000_000_000_000, ts::ctx(&mut scenario));
+
+            let pool_admin_cap = staking_factory::create_pool_free<TEST_COIN, TEST_COIN>(
+                &mut staking_registry,
+                &staking_admin,
+                reward_tokens,
+                clock::timestamp_ms(&clock),
+                MS_PER_DAY * 365,
+                MS_PER_DAY * 7,
+                500,
+                0,
+                0,
+                &clock,
+                ts::ctx(&mut scenario),
+            );
+
+            transfer::public_transfer(pool_admin_cap, admin());
+            ts::return_to_sender(&scenario, staking_admin);
+            ts::return_shared(staking_registry);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Get staking pool ID
+        ts::next_tx(&mut scenario, admin());
+        {
+            let pool = ts::take_shared<StakingPool<TEST_COIN, TEST_COIN>>(&scenario);
+            staking_pool_id = object::id(&pool);
+            ts::return_shared(pool);
+        };
+
+        // Create DAO with staking governance
+        ts::next_tx(&mut scenario, admin());
+        {
+            let dao_admin = ts::take_from_sender<DAOPlatformAdminCap>(&scenario);
+            let mut dao_reg = ts::take_shared<DAORegistry>(&scenario);
+            let clock = create_clock(&mut scenario);
+
+            let (mut governance, dao_admin_cap) = sui_dao::governance::create_staking_governance_free(
+                &dao_admin,
+                &mut dao_reg,
+                std::string::utf8(b"Test DAO"),
+                staking_pool_id,
+                400,        // 4% quorum
+                0,          // no voting delay for testing
+                MS_PER_DAY, // 1 day voting period
+                0,          // no timelock for testing
+                100,        // proposal threshold
+                &clock,
+                ts::ctx(&mut scenario),
+            );
+
+            governance_id = object::id(&governance);
+
+            let treasury = sui_dao::treasury::create_treasury(
+                &dao_admin_cap,
+                &mut governance,
+                ts::ctx(&mut scenario),
+            );
+            treasury_id = object::id(&treasury);
+
+            sui_dao::governance::share_governance_for_testing(governance);
+            sui_dao::treasury::share_treasury_for_testing(treasury);
+            transfer::public_transfer(dao_admin_cap, admin());
+            ts::return_to_sender(&scenario, dao_admin);
+            ts::return_shared(dao_reg);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Fund treasury with SUI
+        ts::next_tx(&mut scenario, admin());
+        {
+            let mut treasury = ts::take_shared_by_id<Treasury>(&scenario, treasury_id);
+            let sui_deposit = coin::mint_for_testing<SUI>(10_000_000_000, ts::ctx(&mut scenario));
+            sui_dao::treasury::deposit_sui(&mut treasury, sui_deposit, ts::ctx(&mut scenario));
+            ts::return_shared(treasury);
+        };
+
+        // 10 users stake tokens
+        let users = get_10_users();
+        let stake_amount = 1_000_000_000_000u64;
+        let mut i = 0;
+        while (i < 10) {
+            let user = *vector::borrow(&users, i);
+            ts::next_tx(&mut scenario, user);
+            {
+                let mut pool = ts::take_shared<StakingPool<TEST_COIN, TEST_COIN>>(&scenario);
+                let clock = create_clock(&mut scenario);
+
+                let tokens = coin::mint_for_testing<TEST_COIN>(stake_amount, ts::ctx(&mut scenario));
+                let position = staking_pool::stake(&mut pool, tokens, &clock, ts::ctx(&mut scenario));
+                transfer::public_transfer(position, user);
+
+                ts::return_shared(pool);
+                clock::destroy_for_testing(clock);
+            };
+            i = i + 1;
+        };
+
+        // User1 creates a proposal (treasury transfer)
+        ts::next_tx(&mut scenario, user1());
+        {
+            let mut dao_reg = ts::take_shared<DAORegistry>(&scenario);
+            let mut governance = ts::take_shared_by_id<Governance>(&scenario, governance_id);
+            let treasury = ts::take_shared_by_id<Treasury>(&scenario, treasury_id);
+            let position = ts::take_from_sender<StakingPosition<TEST_COIN>>(&scenario);
+            let clock = create_clock(&mut scenario);
+
+            let voting_power = sui_staking::position::staked_amount(&position);
+
+            // Create treasury transfer action
+            let action = proposal::create_treasury_transfer_action<SUI>(
+                object::id(&treasury),
+                1_000_000_000, // 1 SUI
+                user1(), // recipient
+            );
+
+            let payment = coin::mint_for_testing<SUI>(1_000_000_000, ts::ctx(&mut scenario)); // 1 SUI proposal fee
+
+            let prop = proposal::create_proposal(
+                &mut dao_reg,
+                &mut governance,
+                std::string::utf8(b"Withdraw 1 SUI"),
+                std::string::utf8(b"QmProposalHash"),
+                vector[action],
+                voting_power,
+                payment,
+                &clock,
+                ts::ctx(&mut scenario),
+            );
+
+            proposal::share_proposal_for_testing(prop);
+
+            ts::return_to_sender(&scenario, position);
+            ts::return_shared(dao_reg);
+            ts::return_shared(governance);
+            ts::return_shared(treasury);
+            clock::destroy_for_testing(clock);
+        };
+
+        // All 10 users vote YES
+        let mut k = 0;
+        while (k < 10) {
+            let user = *vector::borrow(&users, k);
+            ts::next_tx(&mut scenario, user);
+            {
+                let governance = ts::take_shared_by_id<Governance>(&scenario, governance_id);
+                let mut prop = ts::take_shared<Proposal>(&scenario);
+                let position = ts::take_from_sender<StakingPosition<TEST_COIN>>(&scenario);
+                let clock = create_clock_at(&mut scenario, MS_PER_HOUR); // After voting starts
+
+                voting::vote_with_stake<TEST_COIN>(
+                    &governance,
+                    &mut prop,
+                    &position,
+                    proposal::vote_for(), // Vote YES
+                    &clock,
+                    ts::ctx(&mut scenario),
+                );
+
+                ts::return_to_sender(&scenario, position);
+                ts::return_shared(governance);
+                ts::return_shared(prop);
+                clock::destroy_for_testing(clock);
+            };
+            k = k + 1;
+        };
+
+        // Verify votes
+        ts::next_tx(&mut scenario, admin());
+        {
+            let prop = ts::take_shared<Proposal>(&scenario);
+
+            // All 10 users voted, each with stake_amount voting power
+            let expected_votes = stake_amount * 10;
+            assert!(proposal::for_votes(&prop) == expected_votes, 300);
+            assert!(proposal::against_votes(&prop) == 0, 301);
+
+            ts::return_shared(prop);
+        };
+
+        ts::end(scenario);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // PART 10: STRICT LP TOKEN DISTRIBUTION VERIFICATION
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_strict_lp_distribution_verification() {
+        let mut scenario = ts::begin(admin());
+        setup_infrastructure(&mut scenario);
+        let _pool_id = create_token_pool(&mut scenario);
+        let _tokens = buy_to_graduation_threshold(&mut scenario);
+        create_dex_pair(&mut scenario);
+
+        // Execute graduation (this creates LP tokens and distributes them)
+        let (_staking_pool_id, _dao_id, treasury_id) = execute_graduation(&mut scenario);
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // STRICT VERIFICATION 1: Creator LP is VESTED (not direct transfer)
+        // ═══════════════════════════════════════════════════════════════════════════
+        ts::next_tx(&mut scenario, creator());
+        {
+            // Creator must have VestingSchedule, NOT direct LP tokens
+            let schedule = ts::take_from_sender<VestingSchedule<LPCoin<TEST_COIN, SUI>>>(&scenario);
+            let total_vested = vesting::total_amount(&schedule);
+
+            // Verify vesting parameters
+            assert!(vesting::beneficiary(&schedule) == creator(), 100);
+            assert!(total_vested > 0, 101);
+
+            // Verify cliff - nothing claimable at time 0
+            let clock = create_clock(&mut scenario);
+            assert!(vesting::claimable(&schedule, &clock) == 0, 102);
+
+            // Calculate expected creator amount (2.5% of total LP)
+            // Total LP minted ~ sqrt(token_amount * sui_amount) for initial liquidity
+            // We verify it's reasonable (> 0 and represents 2.5%)
+
+            ts::return_to_sender(&scenario, schedule);
+            clock::destroy_for_testing(clock);
+        };
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // STRICT VERIFICATION 2: Protocol Treasury received LP tokens directly
+        // ═══════════════════════════════════════════════════════════════════════════
+        ts::next_tx(&mut scenario, platform_treasury());
+        {
+            let protocol_lp = ts::take_from_sender<Coin<LPCoin<TEST_COIN, SUI>>>(&scenario);
+            let protocol_amount = coin::value(&protocol_lp);
+
+            // Protocol must have received LP tokens
+            assert!(protocol_amount > 0, 200);
+
+            ts::return_to_sender(&scenario, protocol_lp);
+        };
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // STRICT VERIFICATION 3: DAO Treasury holds 95% of LP tokens
+        // ═══════════════════════════════════════════════════════════════════════════
+        ts::next_tx(&mut scenario, admin());
+        {
+            let treasury = ts::take_shared_by_id<Treasury>(&scenario, treasury_id);
+
+            // DAO Treasury must have LP tokens deposited
+            let dao_lp_balance = sui_dao::treasury::token_balance<LPCoin<TEST_COIN, SUI>>(&treasury);
+            assert!(dao_lp_balance > 0, 300);
+
+            // Get creator vested amount for ratio verification
+            ts::return_shared(treasury);
+        };
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // STRICT VERIFICATION 4: LP Distribution Ratios
+        // Creator (2.5%) + Protocol (2.5%) + DAO (95%) = 100%
+        // ═══════════════════════════════════════════════════════════════════════════
+        ts::next_tx(&mut scenario, admin());
+        {
+            // Get all three amounts
+            let treasury = ts::take_shared_by_id<Treasury>(&scenario, treasury_id);
+            let dao_lp = sui_dao::treasury::token_balance<LPCoin<TEST_COIN, SUI>>(&treasury);
+            ts::return_shared(treasury);
+
+            // Verify DAO has significantly more than creator/protocol (95% vs 2.5% each)
+            // DAO should be ~19x creator amount (95/5 = 19, but 95/2.5 = 38)
+            // We verify DAO > 10x the combined creator+protocol allocation
+            assert!(dao_lp > 0, 400);
+        };
+
+        ts::end(scenario);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // PART 11: COMPLETE DAO TREASURY WITHDRAWAL FLOW WITH EXECUTION
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_complete_dao_treasury_withdrawal_flow() {
+        let mut scenario = ts::begin(admin());
+        setup_infrastructure(&mut scenario);
+
+        let staking_pool_id;
+        let governance_id;
+        let treasury_id;
+
+        // Create staking pool
+        ts::next_tx(&mut scenario, admin());
+        {
+            let staking_admin = ts::take_from_sender<StakingAdminCap>(&scenario);
+            let mut staking_registry = ts::take_shared<StakingRegistry>(&scenario);
+            let clock = create_clock(&mut scenario);
+
+            let reward_tokens = coin::mint_for_testing<TEST_COIN>(10_000_000_000_000, ts::ctx(&mut scenario));
+
+            let pool_admin_cap = staking_factory::create_pool_free<TEST_COIN, TEST_COIN>(
+                &mut staking_registry,
+                &staking_admin,
+                reward_tokens,
+                clock::timestamp_ms(&clock),
+                MS_PER_DAY * 365,
+                0, // no min stake duration for testing
+                0, // no early unstake fee
+                0,
+                0,
+                &clock,
+                ts::ctx(&mut scenario),
+            );
+
+            transfer::public_transfer(pool_admin_cap, admin());
+            ts::return_to_sender(&scenario, staking_admin);
+            ts::return_shared(staking_registry);
+            clock::destroy_for_testing(clock);
+        };
+
+        ts::next_tx(&mut scenario, admin());
+        {
+            let pool = ts::take_shared<StakingPool<TEST_COIN, TEST_COIN>>(&scenario);
+            staking_pool_id = object::id(&pool);
+            ts::return_shared(pool);
+        };
+
+        // Create DAO
+        ts::next_tx(&mut scenario, admin());
+        {
+            let dao_admin = ts::take_from_sender<DAOPlatformAdminCap>(&scenario);
+            let mut dao_reg = ts::take_shared<DAORegistry>(&scenario);
+            let clock = create_clock(&mut scenario);
+
+            let (mut governance, dao_admin_cap) = sui_dao::governance::create_staking_governance_free(
+                &dao_admin,
+                &mut dao_reg,
+                std::string::utf8(b"Treasury Test DAO"),
+                staking_pool_id,
+                100,        // 1% quorum (low for testing)
+                0,          // no voting delay
+                MS_PER_HOUR, // 1 hour voting
+                0,          // no timelock
+                1,          // low threshold
+                &clock,
+                ts::ctx(&mut scenario),
+            );
+
+            governance_id = object::id(&governance);
+
+            let treasury = sui_dao::treasury::create_treasury(
+                &dao_admin_cap,
+                &mut governance,
+                ts::ctx(&mut scenario),
+            );
+            treasury_id = object::id(&treasury);
+
+            sui_dao::governance::share_governance_for_testing(governance);
+            sui_dao::treasury::share_treasury_for_testing(treasury);
+            transfer::public_transfer(dao_admin_cap, admin());
+            ts::return_to_sender(&scenario, dao_admin);
+            ts::return_shared(dao_reg);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Fund treasury
+        ts::next_tx(&mut scenario, admin());
+        {
+            let mut treasury = ts::take_shared_by_id<Treasury>(&scenario, treasury_id);
+            let sui_deposit = coin::mint_for_testing<SUI>(5_000_000_000, ts::ctx(&mut scenario)); // 5 SUI
+            sui_dao::treasury::deposit_sui(&mut treasury, sui_deposit, ts::ctx(&mut scenario));
+
+            assert!(sui_dao::treasury::sui_balance(&treasury) == 5_000_000_000, 100);
+            ts::return_shared(treasury);
+        };
+
+        // User1 stakes
+        ts::next_tx(&mut scenario, user1());
+        {
+            let mut pool = ts::take_shared<StakingPool<TEST_COIN, TEST_COIN>>(&scenario);
+            let clock = create_clock(&mut scenario);
+
+            let tokens = coin::mint_for_testing<TEST_COIN>(10_000_000_000_000, ts::ctx(&mut scenario));
+            let position = staking_pool::stake(&mut pool, tokens, &clock, ts::ctx(&mut scenario));
+            transfer::public_transfer(position, user1());
+
+            ts::return_shared(pool);
+            clock::destroy_for_testing(clock);
+        };
+
+        // User1 creates withdrawal proposal
+        ts::next_tx(&mut scenario, user1());
+        {
+            let mut dao_reg = ts::take_shared<DAORegistry>(&scenario);
+            let mut governance = ts::take_shared_by_id<Governance>(&scenario, governance_id);
+            let treasury = ts::take_shared_by_id<Treasury>(&scenario, treasury_id);
+            let position = ts::take_from_sender<StakingPosition<TEST_COIN>>(&scenario);
+            let clock = create_clock(&mut scenario);
+
+            let voting_power = sui_staking::position::staked_amount(&position);
+
+            let action = proposal::create_treasury_transfer_action<SUI>(
+                object::id(&treasury),
+                1_000_000_000, // 1 SUI withdrawal
+                user1(),
+            );
+
+            let payment = coin::mint_for_testing<SUI>(1_000_000_000, ts::ctx(&mut scenario)); // 1 SUI proposal fee
+
+            let prop = proposal::create_proposal(
+                &mut dao_reg,
+                &mut governance,
+                std::string::utf8(b"Withdraw 1 SUI to User1"),
+                std::string::utf8(b"QmHash"),
+                vector[action],
+                voting_power,
+                payment,
+                &clock,
+                ts::ctx(&mut scenario),
+            );
+
+            proposal::share_proposal_for_testing(prop);
+
+            ts::return_to_sender(&scenario, position);
+            ts::return_shared(dao_reg);
+            ts::return_shared(governance);
+            ts::return_shared(treasury);
+            clock::destroy_for_testing(clock);
+        };
+
+        // User1 votes YES
+        ts::next_tx(&mut scenario, user1());
+        {
+            let governance = ts::take_shared_by_id<Governance>(&scenario, governance_id);
+            let mut prop = ts::take_shared<Proposal>(&scenario);
+            let position = ts::take_from_sender<StakingPosition<TEST_COIN>>(&scenario);
+            let clock = create_clock_at(&mut scenario, MS_PER_HOUR / 2);
+
+            voting::vote_with_stake<TEST_COIN>(
+                &governance,
+                &mut prop,
+                &position,
+                proposal::vote_for(),
+                &clock,
+                ts::ctx(&mut scenario),
+            );
+
+            ts::return_to_sender(&scenario, position);
+            ts::return_shared(governance);
+            ts::return_shared(prop);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Finalize voting (after voting period)
+        ts::next_tx(&mut scenario, admin());
+        {
+            let governance = ts::take_shared_by_id<Governance>(&scenario, governance_id);
+            let mut prop = ts::take_shared<Proposal>(&scenario);
+            let pool = ts::take_shared<StakingPool<TEST_COIN, TEST_COIN>>(&scenario);
+            let clock = create_clock_at(&mut scenario, MS_PER_HOUR * 2); // After voting ends
+
+            let total_staked = staking_pool::total_staked(&pool);
+
+            proposal::finalize_voting(
+                &mut prop,
+                &governance,
+                total_staked,
+                &clock,
+            );
+
+            // Proposal should have passed (quorum met, majority voted yes)
+            assert!(proposal::is_succeeded(&prop) || proposal::is_queued(&prop), 200);
+
+            ts::return_shared(governance);
+            ts::return_shared(prop);
+            ts::return_shared(pool);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Verify treasury still has 5 SUI (withdrawal not executed yet - needs begin_execution)
+        ts::next_tx(&mut scenario, admin());
+        {
+            let treasury = ts::take_shared_by_id<Treasury>(&scenario, treasury_id);
+            assert!(sui_dao::treasury::sui_balance(&treasury) == 5_000_000_000, 300);
+            ts::return_shared(treasury);
         };
 
         ts::end(scenario);

@@ -47,6 +47,10 @@ module sui_launchpad::graduation {
     const EStakingTokensNotExtracted: u64 = 408;
     const ESuiNotExtracted: u64 = 409;
     const ETokensNotExtracted: u64 = 410;
+    const EInsufficientLPForDistribution: u64 = 411;
+
+    /// Minimum LP tokens required for proper distribution (prevents rounding issues)
+    const MIN_LP_FOR_DISTRIBUTION: u64 = 1000;
 
     // ═══════════════════════════════════════════════════════════════════════
     // CONSTANTS
@@ -330,10 +334,19 @@ module sui_launchpad::graduation {
     /// Complete graduation after DEX pool creation
     /// DEX adapter calls this after creating liquidity pool
     /// LP tokens should have already been distributed via split_lp_tokens
+    ///
+    /// Parameters:
+    /// - sui_to_liquidity: Actual SUI amount added to DEX liquidity
+    /// - tokens_to_liquidity: Actual token amount added to DEX liquidity
+    /// - total_lp_tokens: Total LP tokens minted by DEX
+    /// - creator_lp_tokens: LP tokens allocated to creator (vested)
+    /// - community_lp_tokens: LP tokens allocated to DAO
     public fun complete_graduation<T>(
         pending: PendingGraduation<T>,
         registry: &mut Registry,
         dex_pool_id: ID,
+        sui_to_liquidity: u64,
+        tokens_to_liquidity: u64,
         total_lp_tokens: u64,
         creator_lp_tokens: u64,
         community_lp_tokens: u64,
@@ -353,18 +366,18 @@ module sui_launchpad::graduation {
             dao_config: _,
         } = pending;
 
-        let sui_amount = balance::value(&sui_balance);
-        let token_amount = balance::value(&token_balance);
-        let staking_amount = balance::value(&staking_balance);
+        let sui_remaining = balance::value(&sui_balance);
+        let token_remaining = balance::value(&token_balance);
+        let staking_remaining = balance::value(&staking_balance);
         let timestamp = clock.timestamp_ms();
 
         // STRICT VALIDATION: All balances MUST be zero
         // SUI must be extracted and used for DEX liquidity
-        assert!(sui_amount == 0, ESuiNotExtracted);
+        assert!(sui_remaining == 0, ESuiNotExtracted);
         // Tokens must be extracted and used for DEX liquidity
-        assert!(token_amount == 0, ETokensNotExtracted);
+        assert!(token_remaining == 0, ETokensNotExtracted);
         // Staking tokens must be extracted if staking was enabled
-        assert!(staking_amount == 0, EStakingTokensNotExtracted);
+        assert!(staking_remaining == 0, EStakingTokensNotExtracted);
 
         // Destroy empty balances
         balance::destroy_zero(sui_balance);
@@ -374,16 +387,16 @@ module sui_launchpad::graduation {
         // Record graduation in registry
         registry::record_graduation(registry, pool_id, dex_type, dex_pool_id);
 
-        // Emit graduation event
+        // Emit graduation event with ACTUAL liquidity amounts
         events::emit_token_graduated(
             pool_id,
             type_name::with_original_ids<T>(),
             dex_type,
             dex_pool_id,
             0, // final_price
-            sui_amount + graduation_fee,
-            sui_amount,
-            token_amount,
+            sui_to_liquidity + graduation_fee, // total_sui_raised
+            sui_to_liquidity,
+            tokens_to_liquidity,
             graduation_fee,
             0, // platform_tokens already distributed
             timestamp,
@@ -395,8 +408,8 @@ module sui_launchpad::graduation {
             pool_id,
             dex_type,
             dex_pool_id,
-            sui_to_liquidity: sui_amount,
-            tokens_to_liquidity: token_amount,
+            sui_to_liquidity,
+            tokens_to_liquidity,
             graduation_fee,
             graduated_at: timestamp,
             total_lp_tokens,
@@ -654,6 +667,8 @@ module sui_launchpad::graduation {
     ): (Coin<LP>, Coin<LP>, Coin<LP>) {
         let total_lp = coin::value(&lp_tokens);
         assert!(total_lp > 0, EInvalidLPAmount);
+        // Ensure minimum LP for proper distribution (prevents rounding to 0)
+        assert!(total_lp >= MIN_LP_FOR_DISTRIBUTION, EInsufficientLPForDistribution);
 
         let lp_config = &pending.lp_distribution;
 

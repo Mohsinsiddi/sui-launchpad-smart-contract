@@ -480,6 +480,7 @@ module sui_launchpad::multi_attack_tests {
                 pending,
                 &mut registry,
                 object::id(&pair),
+                0, 0, // sui_to_liquidity, tokens_to_liquidity
                 1000000, 25000, 950000,
                 &clock,
                 ts::ctx(&mut scenario),

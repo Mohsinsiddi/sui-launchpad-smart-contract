@@ -550,6 +550,7 @@ module sui_launchpad::edge_case_tests {
                 pending,
                 &mut registry,
                 object::id_from_address(@0x123),
+                0, 0, // sui_to_liquidity, tokens_to_liquidity (test values)
                 1000000, 25000, 950000,
                 &clock,
                 ts::ctx(&mut scenario),
@@ -597,6 +598,7 @@ module sui_launchpad::edge_case_tests {
                 pending,
                 &mut registry,
                 object::id_from_address(@0x123),
+                0, 0, // sui_to_liquidity, tokens_to_liquidity (test values)
                 1000000, 25000, 950000,
                 &clock,
                 ts::ctx(&mut scenario),
@@ -685,6 +687,7 @@ module sui_launchpad::edge_case_tests {
                 pending,
                 &mut registry,
                 object::id(&pair),
+                0, 0, // sui_to_liquidity, tokens_to_liquidity (test values)
                 1000000, 25000, 950000,
                 &clock,
                 ts::ctx(&mut scenario),
@@ -778,6 +781,7 @@ module sui_launchpad::edge_case_tests {
                 pending,
                 &mut registry,
                 object::id(&pair),
+                0, 0, // sui_to_liquidity, tokens_to_liquidity (test values)
                 1000000, 25000, 950000,
                 &clock,
                 ts::ctx(&mut scenario),
