@@ -1102,4 +1102,73 @@ module sui_launchpad::config {
     public fun default_dao_voting_period_ms(): u64 { DEFAULT_DAO_VOTING_PERIOD_MS }
     public fun default_dao_timelock_delay_ms(): u64 { DEFAULT_DAO_TIMELOCK_DELAY_MS }
     public fun default_dao_proposal_threshold_bps(): u64 { DEFAULT_DAO_PROPOSAL_THRESHOLD_BPS }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // TEST HELPERS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test_only]
+    public fun create_for_testing(treasury: address, ctx: &mut TxContext): LaunchpadConfig {
+        create_config(treasury, ctx)
+    }
+
+    #[test_only]
+    public fun destroy_for_testing(config: LaunchpadConfig) {
+        let LaunchpadConfig {
+            id,
+            // Fees
+            creation_fee: _,
+            trading_fee_bps: _,
+            graduation_fee_bps: _,
+            platform_allocation_bps: _,
+            // Graduation
+            graduation_threshold: _,
+            min_graduation_liquidity: _,
+            creator_graduation_bps: _,
+            platform_graduation_bps: _,
+            // Bonding Curve
+            default_base_price: _,
+            default_slope: _,
+            default_total_supply: _,
+            // DEX Configuration
+            default_dex: _,
+            cetus_package: _,
+            turbos_package: _,
+            flowx_package: _,
+            suidex_package: _,
+            // Treasury
+            treasury: _,
+            // State
+            paused: _,
+            // LP Distribution
+            creator_lp_bps: _,
+            creator_lp_cliff_ms: _,
+            creator_lp_vesting_ms: _,
+            protocol_lp_bps: _,
+            dao_treasury: _,
+            dao_lp_destination: _,
+            dao_lp_cliff_ms: _,
+            dao_lp_vesting_ms: _,
+            // Staking
+            staking_enabled: _,
+            staking_reward_bps: _,
+            staking_duration_ms: _,
+            staking_min_duration_ms: _,
+            staking_early_fee_bps: _,
+            staking_stake_fee_bps: _,
+            staking_unstake_fee_bps: _,
+            staking_admin_destination: _,
+            staking_reward_type: _,
+            // DAO
+            dao_enabled: _,
+            dao_quorum_bps: _,
+            dao_voting_delay_ms: _,
+            dao_voting_period_ms: _,
+            dao_timelock_delay_ms: _,
+            dao_proposal_threshold_bps: _,
+            dao_council_enabled: _,
+            dao_admin_destination: _,
+        } = config;
+        object::delete(id);
+    }
 }

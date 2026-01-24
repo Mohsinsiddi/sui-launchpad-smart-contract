@@ -247,6 +247,83 @@ module sui_launchpad::cetus_adapter {
     // }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // MULTI-POSITION GRADUATION HELPERS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// LP allocation in basis points
+    const CREATOR_LP_BPS: u64 = 250;   // 2.5%
+    const PROTOCOL_LP_BPS: u64 = 250;  // 2.5%
+    const DAO_LP_BPS: u64 = 9500;      // 95%
+    const BPS_DENOMINATOR: u64 = 10000;
+
+    /// Calculate liquidity split for multi-position graduation
+    /// Returns (creator_sui, creator_token, protocol_sui, protocol_token, dao_sui, dao_token)
+    /// Uses u128 for intermediate calculations to avoid overflow with large token amounts
+    public fun calculate_liquidity_split(
+        total_sui: u64,
+        total_tokens: u64,
+        config: &LaunchpadConfig,
+    ): (u64, u64, u64, u64, u64, u64) {
+        let creator_bps = config::creator_lp_bps(config);
+        let protocol_bps = config::protocol_lp_bps(config);
+        let _dao_bps = BPS_DENOMINATOR - creator_bps - protocol_bps;
+
+        // Use u128 to prevent overflow with large token amounts
+        let creator_sui = (((total_sui as u128) * (creator_bps as u128)) / (BPS_DENOMINATOR as u128)) as u64;
+        let creator_tokens = (((total_tokens as u128) * (creator_bps as u128)) / (BPS_DENOMINATOR as u128)) as u64;
+
+        let protocol_sui = (((total_sui as u128) * (protocol_bps as u128)) / (BPS_DENOMINATOR as u128)) as u64;
+        let protocol_tokens = (((total_tokens as u128) * (protocol_bps as u128)) / (BPS_DENOMINATOR as u128)) as u64;
+
+        let dao_sui = total_sui - creator_sui - protocol_sui;
+        let dao_tokens = total_tokens - creator_tokens - protocol_tokens;
+
+        (creator_sui, creator_tokens, protocol_sui, protocol_tokens, dao_sui, dao_tokens)
+    }
+
+    /// Split coins into 3 portions for multi-position creation
+    public fun split_coins_for_positions<T>(
+        mut sui_coin: Coin<SUI>,
+        mut token_coin: Coin<T>,
+        config: &LaunchpadConfig,
+        ctx: &mut TxContext,
+    ): (
+        Coin<SUI>, Coin<T>,  // Creator portion
+        Coin<SUI>, Coin<T>,  // Protocol portion
+        Coin<SUI>, Coin<T>,  // DAO portion
+    ) {
+        let total_sui = coin::value(&sui_coin);
+        let total_tokens = coin::value(&token_coin);
+
+        let (
+            creator_sui_amt, creator_token_amt,
+            protocol_sui_amt, protocol_token_amt,
+            _dao_sui_amt, _dao_token_amt
+        ) = calculate_liquidity_split(total_sui, total_tokens, config);
+
+        // Split SUI
+        let creator_sui = coin::split(&mut sui_coin, creator_sui_amt, ctx);
+        let protocol_sui = coin::split(&mut sui_coin, protocol_sui_amt, ctx);
+        let dao_sui = sui_coin; // Remainder
+
+        // Split tokens
+        let creator_tokens = coin::split(&mut token_coin, creator_token_amt, ctx);
+        let protocol_tokens = coin::split(&mut token_coin, protocol_token_amt, ctx);
+        let dao_tokens = token_coin; // Remainder
+
+        (
+            creator_sui, creator_tokens,
+            protocol_sui, protocol_tokens,
+            dao_sui, dao_tokens
+        )
+    }
+
+    /// Get LP allocation percentages
+    public fun creator_lp_bps(): u64 { CREATOR_LP_BPS }
+    public fun protocol_lp_bps(): u64 { PROTOCOL_LP_BPS }
+    public fun dao_lp_bps(): u64 { DAO_LP_BPS }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // HELPER FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -330,5 +407,73 @@ module sui_launchpad::cetus_adapter {
         assert!(default_tick_spacing() == 60, 0);
         assert!(default_fee_tier() == 3000, 1);
         assert!(minimum_liquidity() == 1000, 2);
+    }
+
+    #[test]
+    fun test_lp_allocation_constants() {
+        assert!(creator_lp_bps() == 250, 0);   // 2.5%
+        assert!(protocol_lp_bps() == 250, 1);  // 2.5%
+        assert!(dao_lp_bps() == 9500, 2);      // 95%
+        assert!(creator_lp_bps() + protocol_lp_bps() + dao_lp_bps() == 10000, 3);
+    }
+
+    #[test]
+    fun test_calculate_liquidity_split() {
+        let mut ctx = tx_context::dummy();
+        let config = config::create_for_testing(@0xE1, &mut ctx);
+
+        let total_sui = 10_000_000_000; // 10 SUI
+        let total_tokens = 1_000_000_000_000; // 1000 tokens
+
+        let (
+            creator_sui, creator_tokens,
+            protocol_sui, protocol_tokens,
+            dao_sui, dao_tokens
+        ) = calculate_liquidity_split(total_sui, total_tokens, &config);
+
+        // 2.5% each for creator and protocol
+        assert!(creator_sui == 250_000_000, 0);     // 0.25 SUI
+        assert!(creator_tokens == 25_000_000_000, 1); // 25 tokens
+        assert!(protocol_sui == 250_000_000, 2);
+        assert!(protocol_tokens == 25_000_000_000, 3);
+
+        // 95% for DAO
+        assert!(dao_sui == 9_500_000_000, 4);       // 9.5 SUI
+        assert!(dao_tokens == 950_000_000_000, 5);  // 950 tokens
+
+        // Total should equal original
+        assert!(creator_sui + protocol_sui + dao_sui == total_sui, 6);
+        assert!(creator_tokens + protocol_tokens + dao_tokens == total_tokens, 7);
+
+        config::destroy_for_testing(config);
+    }
+
+    #[test]
+    fun test_split_coins_for_positions() {
+        let mut ctx = tx_context::dummy();
+        let config = config::create_for_testing(@0xE1, &mut ctx);
+
+        let sui_coin = coin::mint_for_testing<SUI>(10_000_000_000, &mut ctx);
+        let token_coin = coin::mint_for_testing<SUI>(1_000_000_000_000, &mut ctx); // Using SUI as test token
+
+        let (
+            creator_sui, creator_tokens,
+            protocol_sui, protocol_tokens,
+            dao_sui, dao_tokens
+        ) = split_coins_for_positions(sui_coin, token_coin, &config, &mut ctx);
+
+        // Verify amounts
+        assert!(coin::value(&creator_sui) == 250_000_000, 0);
+        assert!(coin::value(&protocol_sui) == 250_000_000, 1);
+        assert!(coin::value(&dao_sui) == 9_500_000_000, 2);
+
+        // Cleanup
+        coin::burn_for_testing(creator_sui);
+        coin::burn_for_testing(creator_tokens);
+        coin::burn_for_testing(protocol_sui);
+        coin::burn_for_testing(protocol_tokens);
+        coin::burn_for_testing(dao_sui);
+        coin::burn_for_testing(dao_tokens);
+        config::destroy_for_testing(config);
     }
 }
