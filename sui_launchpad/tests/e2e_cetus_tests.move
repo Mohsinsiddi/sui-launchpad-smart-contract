@@ -1601,4 +1601,159 @@ module sui_launchpad::e2e_cetus_tests {
 
         ts::end(scenario);
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // PART 9: TRADING BLOCKED AFTER GRADUATION
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    #[expected_failure]
+    fun test_trading_blocked_after_graduation() {
+        let mut scenario = ts::begin(admin());
+        setup_infrastructure(&mut scenario);
+        let _pool_id = create_token_pool(&mut scenario);
+        let _tokens = buy_to_graduation_threshold(&mut scenario);
+        let (_staking_pool_id, _dao_id, _treasury_id) = execute_graduation(&mut scenario);
+
+        // Try to buy from bonding pool after graduation - should fail
+        ts::next_tx(&mut scenario, alice());
+        {
+            let mut pool = ts::take_shared<BondingPool<TEST_COIN>>(&scenario);
+            let config = ts::take_shared<LaunchpadConfig>(&scenario);
+            let clock = create_clock(&mut scenario);
+
+            let payment = coin::mint_for_testing<SUI>(1_000_000_000, ts::ctx(&mut scenario));
+            let tokens = bonding_curve::buy(
+                &mut pool,
+                &config,
+                payment,
+                1,
+                &clock,
+                ts::ctx(&mut scenario),
+            );
+
+            transfer::public_transfer(tokens, alice());
+            ts::return_shared(pool);
+            ts::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        ts::end(scenario);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // PART 11: USER UNSTAKE AND CLAIM REWARDS
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_user_unstake_and_claim_rewards() {
+        let mut scenario = ts::begin(admin());
+        setup_infrastructure(&mut scenario);
+
+        // Create staking pool with rewards
+        ts::next_tx(&mut scenario, admin());
+        {
+            let staking_admin = ts::take_from_sender<StakingAdminCap>(&scenario);
+            let mut staking_registry = ts::take_shared<StakingRegistry>(&scenario);
+            let clock = create_clock(&mut scenario);
+
+            let reward_tokens = coin::mint_for_testing<TEST_COIN>(10_000_000_000_000, ts::ctx(&mut scenario));
+
+            let pool_admin_cap = staking_factory::create_pool_free<TEST_COIN, TEST_COIN>(
+                &mut staking_registry,
+                &staking_admin,
+                reward_tokens,
+                clock::timestamp_ms(&clock),
+                MS_PER_DAY * 365, // 1 year duration
+                0, // no min stake duration
+                0, // no early unstake fee
+                0,
+                0,
+                &clock,
+                ts::ctx(&mut scenario),
+            );
+
+            transfer::public_transfer(pool_admin_cap, admin());
+            ts::return_to_sender(&scenario, staking_admin);
+            ts::return_shared(staking_registry);
+            clock::destroy_for_testing(clock);
+        };
+
+        // User1 stakes tokens
+        ts::next_tx(&mut scenario, user1());
+        {
+            let mut pool = ts::take_shared<StakingPool<TEST_COIN, TEST_COIN>>(&scenario);
+            let clock = create_clock(&mut scenario);
+
+            let stake_amount = 1_000_000_000_000u64;
+            let tokens = coin::mint_for_testing<TEST_COIN>(stake_amount, ts::ctx(&mut scenario));
+            let position = staking_pool::stake(&mut pool, tokens, &clock, ts::ctx(&mut scenario));
+
+            assert!(sui_staking::position::staked_amount(&position) == stake_amount, 100);
+            transfer::public_transfer(position, user1());
+
+            ts::return_shared(pool);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Fast forward time to accumulate rewards (30 days)
+        ts::next_tx(&mut scenario, user1());
+        {
+            let pool = ts::take_shared<StakingPool<TEST_COIN, TEST_COIN>>(&scenario);
+            let position = ts::take_from_sender<StakingPosition<TEST_COIN>>(&scenario);
+
+            let time_after_30_days = MS_PER_DAY * 30;
+            let pending = staking_pool::pending_rewards(&pool, &position, time_after_30_days);
+
+            // Should have accumulated some rewards
+            assert!(pending > 0, 200);
+
+            ts::return_to_sender(&scenario, position);
+            ts::return_shared(pool);
+        };
+
+        // User1 claims rewards without unstaking
+        ts::next_tx(&mut scenario, user1());
+        {
+            let mut pool = ts::take_shared<StakingPool<TEST_COIN, TEST_COIN>>(&scenario);
+            let mut position = ts::take_from_sender<StakingPosition<TEST_COIN>>(&scenario);
+            let clock = create_clock_at(&mut scenario, MS_PER_DAY * 30);
+
+            let rewards = staking_pool::claim_rewards(&mut pool, &mut position, &clock, ts::ctx(&mut scenario));
+
+            assert!(coin::value(&rewards) > 0, 300);
+            transfer::public_transfer(rewards, user1());
+            ts::return_to_sender(&scenario, position);
+            ts::return_shared(pool);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Verify user1 received rewards
+        ts::next_tx(&mut scenario, user1());
+        {
+            let rewards = ts::take_from_sender<Coin<TEST_COIN>>(&scenario);
+            assert!(coin::value(&rewards) > 0, 400);
+            ts::return_to_sender(&scenario, rewards);
+        };
+
+        // User1 unstakes (after more time)
+        ts::next_tx(&mut scenario, user1());
+        {
+            let mut pool = ts::take_shared<StakingPool<TEST_COIN, TEST_COIN>>(&scenario);
+            let position = ts::take_from_sender<StakingPosition<TEST_COIN>>(&scenario);
+            let clock = create_clock_at(&mut scenario, MS_PER_DAY * 60);
+
+            let (staked_tokens, final_rewards) = staking_pool::unstake(&mut pool, position, &clock, ts::ctx(&mut scenario));
+
+            // Should get back staked tokens
+            assert!(coin::value(&staked_tokens) == 1_000_000_000_000, 500);
+            transfer::public_transfer(staked_tokens, user1());
+            transfer::public_transfer(final_rewards, user1());
+
+            ts::return_shared(pool);
+            clock::destroy_for_testing(clock);
+        };
+
+        ts::end(scenario);
+    }
 }
