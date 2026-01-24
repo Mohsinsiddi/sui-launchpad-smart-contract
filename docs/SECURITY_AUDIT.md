@@ -1,8 +1,8 @@
 # Security Audit Report
 
-**Date:** January 23, 2026
+**Date:** January 23-24, 2026
 **Auditor:** Internal Security Review
-**Packages:** sui_launchpad, sui_staking, sui_dao, sui_vesting
+**Packages:** sui_launchpad, sui_staking, sui_dao, sui_vesting, sui_multisig
 **Status:** All Critical/High Issues Fixed
 
 ---
@@ -17,8 +17,9 @@ A comprehensive security audit was conducted across all four smart contract pack
 | sui_staking | 3 | 4 | 4 | 4 | Fixed |
 | sui_dao | 3 | 6 | 6 | 4 | Fixed |
 | sui_vesting | 3 | 4 | 4 | 4 | Reviewed |
+| sui_multisig | 0 | 0 | 2 | 2 | Reviewed |
 
-**Total Tests:** 504 (All Passing)
+**Total Tests:** 541 (All Passing)
 
 ---
 
@@ -272,7 +273,8 @@ public fun complete_graduation<T>(
 | sui_staking | 97 | All Passing |
 | sui_dao | 60 | All Passing |
 | sui_vesting | 65 | All Passing |
-| **Total** | **504** | **All Passing** |
+| sui_multisig | 37 | All Passing |
+| **Total** | **541** | **All Passing** |
 
 ---
 
@@ -309,6 +311,9 @@ public fun complete_graduation<T>(
 | `sui_staking/sources/core/math.move` | +overflow protection |
 | `sui_dao/sources/proposal.move` | +position_id tracking in delegation votes |
 | `sui_dao/sources/delegation.move` | +pass position_id to prevent double voting |
+| `sui_multisig/sources/vault.move` | +ObjectBag for NFT storage |
+| `sui_multisig/sources/proposal.move` | +NFT transfer action type |
+| `sui_multisig/sources/events.move` | +NFT deposit/withdraw events |
 
 ---
 
@@ -338,6 +343,12 @@ public fun complete_graduation<T>(
 ---
 
 ## Changelog
+
+### v1.1.0 (January 24, 2026)
+- Added sui_multisig to audit scope
+- Added NFT vault support to multisig
+- All 541 tests passing
+- E2E flow verified for SuiDex integration
 
 ### v1.0.0 (January 23, 2026)
 - Initial security audit completed

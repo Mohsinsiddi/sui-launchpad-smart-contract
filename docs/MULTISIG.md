@@ -174,7 +174,11 @@ MultisigAction (enum)
    └── Call any contract where multisig is admin
    └── Fields: target, module, function, type_args, args
 
-7. BATCH_TRANSFER
+7. NFT_TRANSFER
+   └── Transfer NFT from vault to recipient
+   └── Fields: nft_id, recipient, nft_type
+
+8. BATCH_TRANSFER (future)
    └── Multiple transfers in one proposal
    └── Fields: vector<TransferInfo>
 
@@ -348,12 +352,63 @@ Anyone can deposit:
 ═══════════════════
 
     SUI:
-    multisig::deposit_sui(wallet, sui_coin)
+    vault::deposit(vault, sui_coin, ctx)
 
-    Other tokens:
-    multisig::deposit_token<T>(wallet, token_coin)
+    Other tokens (including LP tokens):
+    vault::deposit<T>(vault, token_coin, ctx)
+
+    NFTs (any object with key + store):
+    vault::deposit_nft<T>(vault, nft, ctx)
 
     No proposal needed - anyone can fund the wallet
+```
+
+### NFT Vault Support
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        NFT VAULT                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+The vault supports both fungible tokens (Coin<T>) and NFTs:
+
+STORAGE:
+════════
+    Coins:  Bag (keyed by type name)
+    NFTs:   ObjectBag (keyed by object ID)
+
+SUPPORTED ASSETS:
+═════════════════
+    ✅ SUI (Coin<SUI>)
+    ✅ Any Coin<T> (custom tokens, LP tokens)
+    ✅ Any NFT with key + store abilities:
+       • Cetus Position NFTs
+       • Turbos Position NFTs
+       • Custom NFT collections
+       • Game items
+       • Domain names
+
+NFT DEPOSIT:
+════════════
+    // Anyone can deposit NFTs
+    vault::deposit_nft<MyNFT>(vault, nft, ctx);
+
+    // Check NFT in vault
+    vault::has_nft(vault, nft_id);  // true/false
+    vault::nft_count(vault);        // number of NFTs
+
+NFT TRANSFER (requires proposal):
+═════════════════════════════════
+    // Create proposal
+    proposal::propose_nft_transfer<MyNFT>(
+        wallet, registry, nft_id, recipient, description, clock, ctx
+    );
+
+    // After threshold approvals, execute
+    let nft = proposal::execute_nft_transfer<MyNFT>(
+        proposal, wallet, vault, registry, fee, clock, ctx
+    );
+    transfer::public_transfer(nft, recipient);
 ```
 
 ### Create Proposal
@@ -811,12 +866,12 @@ struct MultisigRegistry has key {
 |------|-------|-------------|
 | registry.move | ~310 | Platform config, AdminCap, fees |
 | wallet.move | ~347 | Wallet creation, signer management |
-| vault.move | ~176 | Generic multi-coin Bag storage |
-| proposal.move | ~826 | Proposal lifecycle, custom TX auth |
-| events.move | ~317 | All event definitions |
-| **Total Sources** | **~1,976** | |
-| **Tests** | **~2,586** | 33 tests |
-| **Grand Total** | **~4,562** | |
+| vault.move | ~220 | Multi-coin Bag + NFT ObjectBag storage |
+| proposal.move | ~900 | Proposal lifecycle, custom TX auth, NFT transfer |
+| events.move | ~360 | All event definitions (incl. NFT events) |
+| **Total Sources** | **~2,137** | |
+| **Tests** | **~2,800** | 37 tests |
+| **Grand Total** | **~4,937** | |
 
 ---
 
@@ -826,11 +881,11 @@ struct MultisigRegistry has key {
 |-----------|--------|-------|
 | Registry | ✅ DONE | Platform config, AdminCap |
 | Wallet | ✅ DONE | N-of-M creation, signer management |
-| Vault | ✅ DONE | Generic Coin<T> with Bag |
-| Proposal | ✅ DONE | Full lifecycle + custom TX |
-| Events | ✅ DONE | All events defined |
-| Tests | ✅ DONE | 33 tests passing |
-| Audit | Not started | |
+| Vault | ✅ DONE | Generic Coin<T> with Bag + NFT with ObjectBag |
+| Proposal | ✅ DONE | Full lifecycle + custom TX + NFT transfer |
+| Events | ✅ DONE | All events defined (incl. NFT events) |
+| Tests | ✅ DONE | 37 tests passing |
+| Audit | ✅ DONE | Internal audit complete |
 
 ---
 
@@ -839,10 +894,11 @@ struct MultisigRegistry has key {
 ### Key Differences from Spec
 
 1. **No separate custom_tx.move** - Custom TX logic integrated into proposal.move
-2. **Added vault.move** - Dedicated module for multi-coin storage
+2. **Added vault.move** - Dedicated module for multi-coin + NFT storage
 3. **Added registry.move** - Platform configuration and fees
 4. **Hot potato auth** - MultisigAuth struct with no abilities for secure custom TX
 5. **Generic Coin<T>** - All tokens (including SUI) handled uniformly
+6. **NFT support** - ObjectBag for NFT storage, NFT transfer proposals
 
 ### Custom TX Flow (Implemented)
 
@@ -858,7 +914,10 @@ struct MultisigRegistry has key {
 
 - Wallet creation (1-of-1, 2-of-3, validation errors)
 - Multi-coin vault (SUI + 3 custom tokens)
+- NFT vault (deposit, multiple types, transfer proposals)
 - Proposal lifecycle (create, approve, reject, cancel, expire)
 - Token transfers (all types via generic proposal)
+- NFT transfers (with 2-of-3 approval flow)
 - Custom TX with strict data verification
 - Signer management (add, remove, auto-adjust threshold)
+- Mixed assets (coins + NFTs in same vault)

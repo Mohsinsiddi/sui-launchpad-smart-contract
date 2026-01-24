@@ -4,7 +4,7 @@
 
 This document tracks the development progress of all products in the DeFi suite.
 
-**Last Updated:** 2026-01-23
+**Last Updated:** 2026-01-24
 
 ---
 
@@ -16,8 +16,8 @@ This document tracks the development progress of all products in the DeFi suite.
 | **Vesting** | ✅ DONE | 100% | ~760 | ~1,350 | 65 |
 | **Staking** | ✅ DONE | 100% | ~940 | ~2,170 | 97 |
 | **DAO** | ✅ DONE | 100% | ~1,510 | ~5,200 | 60 |
-| **Multisig** | ✅ DONE | 100% | ~820 | ~1,976 | 33 |
-| **Total** | - | 100% | ~5,830 | ~13,200 | **537** |
+| **Multisig** | ✅ DONE | 100% | ~820 | ~2,100 | 37 |
+| **Total** | - | 100% | ~5,830 | ~13,320 | **541** |
 
 > **Security Audit:** Internal security audit completed. See [SECURITY_AUDIT.md](./SECURITY_AUDIT.md) for details.
 
@@ -67,18 +67,19 @@ PHASE 4: DAO
 
 PHASE 5: MULTISIG
 ═════════════════
-[████████████████████] 100% DONE - 33 tests
+[████████████████████] 100% DONE - 37 tests
 → Separate package: sui_multisig
 → N-of-M signature wallets
-→ Multi-coin vault (generic Coin<T>)
+→ Multi-coin vault (generic Coin<T>) + NFT vault (ObjectBag)
 → Custom TX execution with hot potato auth
 
 PHASE 6: INTEGRATION & TESTING
 ══════════════════════════════
-[████████████████████] 100% DONE - 537 tests
-→ E2E tests for SuiDex LP flow
+[████████████████████] 100% DONE - 541 tests
+→ E2E tests for SuiDex LP flow (22 tests)
 → Vesting, staking, DAO integration tests
 → Cross-package security tests
+→ NFT vault tests for multisig
 
 PHASE 7: SECURITY AUDIT
 ═══════════════════════
@@ -356,20 +357,20 @@ PHASE 8: MAINNET LAUNCH
 
 ### 5. Multisig (sui_multisig) - STANDALONE PACKAGE
 
-**Overall Progress:** 100% - 33 tests passing
+**Overall Progress:** 100% - 37 tests passing
 
 | Module | File | Status | Lines | Notes |
 |--------|------|--------|-------|-------|
 | **Main** | | | | |
 | └ Registry | `registry.move` | DONE | ~310 | Platform config, AdminCap |
 | └ Wallet | `wallet.move` | DONE | ~347 | Wallet creation, signer management |
-| └ Vault | `vault.move` | DONE | ~176 | Generic multi-coin Bag storage |
-| └ Proposal | `proposal.move` | DONE | ~826 | Proposals, approvals, execution, custom TX |
-| └ Events | `events.move` | DONE | ~317 | All event definitions |
+| └ Vault | `vault.move` | DONE | ~220 | Multi-coin Bag + NFT ObjectBag storage |
+| └ Proposal | `proposal.move` | DONE | ~900 | Proposals, approvals, execution, custom TX, NFT transfer |
+| └ Events | `events.move` | DONE | ~360 | All event definitions (incl. NFT events) |
 | **Tests** | | | | |
 | └ test_coins | `tests/test_coins.move` | DONE | ~45 | TEST_TOKEN_A/B/C |
-| └ mock_target | `tests/mock_target.move` | DONE | ~149 | Mock contract for custom TX |
-| └ multisig_tests | `tests/multisig_tests.move` | DONE | ~2,392 | 33 comprehensive tests |
+| └ mock_target | `tests/mock_target.move` | DONE | ~200 | Mock contract + MockNFT/MockNFT2 |
+| └ multisig_tests | `tests/multisig_tests.move` | DONE | ~2,600 | 37 comprehensive tests |
 
 **Blockers:** None
 
@@ -382,13 +383,15 @@ PHASE 8: MAINNET LAUNCH
 - [x] Set up Move project structure (sui move new)
 - [x] registry.move - Platform config, AdminCap, creation/execution fees
 - [x] wallet.move - N-of-M wallet creation, signer add/remove, threshold change
-- [x] vault.move - Generic multi-coin vault with Bag storage
-- [x] proposal.move - Full proposal lifecycle with hot potato auth
-- [x] events.move - All wallet, proposal, vault, custom TX events
+- [x] vault.move - Generic multi-coin vault with Bag storage + NFT storage with ObjectBag
+- [x] proposal.move - Full proposal lifecycle with hot potato auth + NFT transfer proposals
+- [x] events.move - All wallet, proposal, vault, custom TX, NFT events
 - [x] Custom TX execution with MultisigAuth hot potato pattern
-- [x] Comprehensive tests (33 tests):
+- [x] NFT vault support (deposit, withdraw, transfer proposals)
+- [x] Comprehensive tests (37 tests):
   - Wallet creation tests (1-of-1, 2-of-3, validation errors)
   - Multi-coin vault tests (SUI, TOKEN_A, TOKEN_B, TOKEN_C)
+  - NFT vault tests (deposit, multiple NFT types, transfer proposals)
   - Proposal lifecycle tests (approve, reject, cancel, expiry)
   - Transfer tests (all token types via generic proposal)
   - Custom TX tests (strict data verification on external contracts)
@@ -397,7 +400,8 @@ PHASE 8: MAINNET LAUNCH
 
 **Key Features:**
 - N-of-M signature wallets (1-of-1 to any configuration)
-- Generic multi-coin vault (any Coin<T> including SUI)
+- Generic multi-coin vault (any Coin<T> including SUI and LP tokens)
+- **NFT vault support (any object with key+store abilities)**
 - Hot potato MultisigAuth for custom TX execution
 - Auto-approval when threshold reached on create (1-of-1 wallets)
 - Proposal expiration and nonce-based replay protection
@@ -424,12 +428,12 @@ PHASE 8: MAINNET LAUNCH
 
 | Product | Unit Tests | Integration Tests | Testnet Deploy |
 |---------|------------|-------------------|----------------|
-| Launchpad | **282 Passing** ✅ | E2E Complete ✅ | Not Started |
+| Launchpad | **282 Passing** ✅ | E2E SuiDex Complete ✅ | Not Started |
 | Vesting | **65 Passing** ✅ | Included ✅ | Not Started |
 | Staking | **97 Passing** ✅ | Included ✅ | Not Started |
 | DAO | **60 Passing** ✅ | Included ✅ | Not Started |
-| Multisig | **33 Passing** ✅ | Not Started | Not Started |
-| **Total** | **537 Tests** | | |
+| Multisig | **37 Passing** ✅ | NFT Vault Complete ✅ | Not Started |
+| **Total** | **541 Tests** | | |
 
 ---
 
@@ -441,9 +445,9 @@ PHASE 8: MAINNET LAUNCH
 | Staking | Internal | ✅ Completed | [SECURITY_AUDIT.md](./SECURITY_AUDIT.md) |
 | DAO | Internal | ✅ Completed | [SECURITY_AUDIT.md](./SECURITY_AUDIT.md) |
 | Vesting | Internal | ✅ Completed | [SECURITY_AUDIT.md](./SECURITY_AUDIT.md) |
-| Multisig | TBD | Not Started | - |
+| Multisig | Internal | ✅ Completed | [SECURITY_AUDIT.md](./SECURITY_AUDIT.md) |
 
-> **Note:** Internal security audit completed on Jan 23, 2026. External audit recommended before mainnet deployment.
+> **Note:** Internal security audit completed on Jan 23-24, 2026. External audit recommended before mainnet deployment.
 
 ---
 
@@ -470,6 +474,29 @@ PHASE 8: MAINNET LAUNCH
 ---
 
 ## Changelog
+
+### 2026-01-24 (Multisig NFT Vault Support)
+- **sui_multisig NFT vault support:** Added ability to hold and transfer NFTs
+  - Added `ObjectBag` to `MultisigVault` for NFT storage
+  - Added `deposit_nft<T: key + store>()` - Deposit any NFT
+  - Added `withdraw_nft<T: key + store>()` - Withdraw NFT (package-level)
+  - Added `propose_nft_transfer<T>()` - Create NFT transfer proposal
+  - Added `execute_nft_transfer<T>()` - Execute NFT transfer
+  - Added `NftDeposited` and `NftWithdrawn` events
+  - Added `ENftNotFound` and `ENftTypeMismatch` errors
+  - Added `has_nft()` and `nft_count()` view functions
+- **Vault now supports:**
+  - Any `Coin<T>` (including SUI and LP tokens)
+  - Any NFT with `key + store` abilities (including Cetus Position NFTs)
+- **New tests (4 new, 37 total):**
+  - `test_deposit_nft` - Single NFT deposit
+  - `test_deposit_multiple_nfts` - Multiple NFT types
+  - `test_nft_transfer_proposal` - Full NFT transfer flow with 2-of-3 approval
+  - `test_vault_holds_coins_and_nfts` - Mixed coins + NFTs in same vault
+- **Test helpers updated:**
+  - Added `MockNFT` and `MockNFT2` test structs to mock_target.move
+  - Added NFT create/destroy helper functions
+- **Total tests: 541** (was 537)
 
 ### 2026-01-23 (Security Audit Complete)
 - **Internal security audit completed** - 64 issues identified, all critical/high fixed
