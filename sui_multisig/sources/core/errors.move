@@ -61,6 +61,10 @@ module sui_multisig::errors {
     const EZeroAmount: u64 = 301;
     /// Token type not found
     const ETokenNotFound: u64 = 302;
+    /// NFT not found in vault
+    const ENftNotFound: u64 = 303;
+    /// NFT type mismatch
+    const ENftTypeMismatch: u64 = 304;
 
     // ═══════════════════════════════════════════════════════════════════════
     // ACCESS ERRORS (400-499)
@@ -117,6 +121,8 @@ module sui_multisig::errors {
     public fun insufficient_balance(): u64 { EInsufficientBalance }
     public fun zero_amount(): u64 { EZeroAmount }
     public fun token_not_found(): u64 { ETokenNotFound }
+    public fun nft_not_found(): u64 { ENftNotFound }
+    public fun nft_type_mismatch(): u64 { ENftTypeMismatch }
 
     // Access errors
     public fun not_authorized(): u64 { ENotAuthorized }

@@ -2389,4 +2389,324 @@ module sui_multisig::multisig_tests {
         clock::destroy_for_testing(clock);
         ts::end(scenario);
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // NFT VAULT TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Test: Deposit and verify NFT in vault
+    #[test]
+    fun test_deposit_nft() {
+        let mut scenario = ts::begin(ADMIN);
+        let clock = clock::create_for_testing(ts::ctx(&mut scenario));
+
+        ts::next_tx(&mut scenario, ADMIN);
+        { registry::init_for_testing(ts::ctx(&mut scenario)); };
+
+        // Create wallet
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let mut registry = ts::take_shared<MultisigRegistry>(&scenario);
+            let wallet = wallet::create_wallet(
+                &mut registry,
+                std::string::utf8(b"NFT Vault Test"),
+                vector[ALICE],
+                1,
+                mint_sui(5_000_000_000, ts::ctx(&mut scenario)),
+                &clock,
+                ts::ctx(&mut scenario),
+            );
+            ts::return_shared(registry);
+            transfer::public_share_object(wallet);
+        };
+
+        // Create and deposit NFT
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let mut vault = ts::take_shared<MultisigVault>(&scenario);
+
+            // Verify vault is empty
+            assert!(vault::nft_count(&vault) == 0, 700);
+
+            // Create and deposit NFT
+            let nft = mock_target::create_nft(
+                std::string::utf8(b"Test NFT"),
+                100,
+                ts::ctx(&mut scenario),
+            );
+            let nft_id = mock_target::nft_id(&nft);
+
+            vault::deposit_nft(&mut vault, nft, ts::ctx(&mut scenario));
+
+            // Verify NFT is in vault
+            assert!(vault::nft_count(&vault) == 1, 701);
+            assert!(vault::has_nft(&vault, nft_id), 702);
+
+            ts::return_shared(vault);
+        };
+
+        clock::destroy_for_testing(clock);
+        ts::end(scenario);
+    }
+
+    /// Test: Deposit multiple NFTs of different types
+    #[test]
+    fun test_deposit_multiple_nfts() {
+        let mut scenario = ts::begin(ADMIN);
+        let clock = clock::create_for_testing(ts::ctx(&mut scenario));
+
+        ts::next_tx(&mut scenario, ADMIN);
+        { registry::init_for_testing(ts::ctx(&mut scenario)); };
+
+        // Create wallet
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let mut registry = ts::take_shared<MultisigRegistry>(&scenario);
+            let wallet = wallet::create_wallet(
+                &mut registry,
+                std::string::utf8(b"Multi NFT Vault"),
+                vector[ALICE],
+                1,
+                mint_sui(5_000_000_000, ts::ctx(&mut scenario)),
+                &clock,
+                ts::ctx(&mut scenario),
+            );
+            ts::return_shared(registry);
+            transfer::public_share_object(wallet);
+        };
+
+        // Create and deposit multiple NFTs
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let mut vault = ts::take_shared<MultisigVault>(&scenario);
+
+            // Create NFTs
+            let nft1 = mock_target::create_nft(
+                std::string::utf8(b"NFT 1"),
+                100,
+                ts::ctx(&mut scenario),
+            );
+            let nft1_id = mock_target::nft_id(&nft1);
+
+            let nft2 = mock_target::create_nft(
+                std::string::utf8(b"NFT 2"),
+                200,
+                ts::ctx(&mut scenario),
+            );
+            let nft2_id = mock_target::nft_id(&nft2);
+
+            let nft3 = mock_target::create_nft2(
+                std::string::utf8(b"NFT2 Type"),
+                ts::ctx(&mut scenario),
+            );
+            let nft3_id = mock_target::nft2_id(&nft3);
+
+            // Deposit all NFTs
+            vault::deposit_nft(&mut vault, nft1, ts::ctx(&mut scenario));
+            vault::deposit_nft(&mut vault, nft2, ts::ctx(&mut scenario));
+            vault::deposit_nft(&mut vault, nft3, ts::ctx(&mut scenario));
+
+            // Verify all NFTs are in vault
+            assert!(vault::nft_count(&vault) == 3, 710);
+            assert!(vault::has_nft(&vault, nft1_id), 711);
+            assert!(vault::has_nft(&vault, nft2_id), 712);
+            assert!(vault::has_nft(&vault, nft3_id), 713);
+
+            ts::return_shared(vault);
+        };
+
+        clock::destroy_for_testing(clock);
+        ts::end(scenario);
+    }
+
+    /// Test: NFT transfer proposal creation and execution
+    #[test]
+    fun test_nft_transfer_proposal() {
+        let mut scenario = ts::begin(ADMIN);
+        let clock = clock::create_for_testing(ts::ctx(&mut scenario));
+
+        ts::next_tx(&mut scenario, ADMIN);
+        { registry::init_for_testing(ts::ctx(&mut scenario)); };
+
+        // Create 2-of-3 wallet
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let mut registry = ts::take_shared<MultisigRegistry>(&scenario);
+            let wallet = wallet::create_wallet(
+                &mut registry,
+                std::string::utf8(b"NFT Transfer Wallet"),
+                vector[ALICE, BOB, CHARLIE],
+                2,
+                mint_sui(5_000_000_000, ts::ctx(&mut scenario)),
+                &clock,
+                ts::ctx(&mut scenario),
+            );
+            ts::return_shared(registry);
+            transfer::public_share_object(wallet);
+        };
+
+        // Create and deposit NFT
+        let mut nft_id: ID = object::id_from_address(@0x0);
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let mut vault = ts::take_shared<MultisigVault>(&scenario);
+
+            let nft = mock_target::create_nft(
+                std::string::utf8(b"Valuable NFT"),
+                1000,
+                ts::ctx(&mut scenario),
+            );
+            nft_id = mock_target::nft_id(&nft);
+
+            vault::deposit_nft(&mut vault, nft, ts::ctx(&mut scenario));
+            assert!(vault::has_nft(&vault, nft_id), 720);
+
+            ts::return_shared(vault);
+        };
+
+        // Alice creates NFT transfer proposal
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let wallet = ts::take_shared<MultisigWallet>(&scenario);
+            let registry = ts::take_shared<MultisigRegistry>(&scenario);
+
+            let proposal = proposal::propose_nft_transfer<mock_target::MockNFT>(
+                &wallet, &registry,
+                nft_id,
+                RECIPIENT,
+                std::string::utf8(b"Transfer NFT to recipient"),
+                &clock, ts::ctx(&mut scenario),
+            );
+
+            // Verify proposal details
+            assert!(proposal::action_type(&proposal) == proposal::action_type_nft_transfer(), 721);
+            assert!(proposal::action_nft_id(&proposal) == nft_id, 722);
+            assert!(proposal::action_recipient(&proposal) == RECIPIENT, 723);
+
+            ts::return_shared(wallet);
+            ts::return_shared(registry);
+            transfer::public_share_object(proposal);
+        };
+
+        // Bob approves (reaches threshold)
+        ts::next_tx(&mut scenario, BOB);
+        {
+            let wallet = ts::take_shared<MultisigWallet>(&scenario);
+            let mut proposal = ts::take_shared<MultisigProposal>(&scenario);
+
+            proposal::approve(&mut proposal, &wallet, &clock, ts::ctx(&mut scenario));
+
+            assert!(proposal::status(&proposal) == proposal::status_approved(), 724);
+
+            ts::return_shared(wallet);
+            ts::return_shared(proposal);
+        };
+
+        // Alice executes
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let mut wallet = ts::take_shared<MultisigWallet>(&scenario);
+            let mut vault = ts::take_shared<MultisigVault>(&scenario);
+            let mut registry = ts::take_shared<MultisigRegistry>(&scenario);
+            let mut proposal = ts::take_shared<MultisigProposal>(&scenario);
+
+            // Verify NFT is in vault before execution
+            assert!(vault::has_nft(&vault, nft_id), 725);
+
+            let nft = proposal::execute_nft_transfer<mock_target::MockNFT>(
+                &mut proposal, &mut wallet, &mut vault, &mut registry,
+                mint_sui(100_000_000, ts::ctx(&mut scenario)),
+                &clock, ts::ctx(&mut scenario),
+            );
+
+            // Verify NFT removed from vault
+            assert!(!vault::has_nft(&vault, nft_id), 726);
+            assert!(vault::nft_count(&vault) == 0, 727);
+
+            // Verify proposal executed
+            assert!(proposal::status(&proposal) == proposal::status_executed(), 728);
+
+            // Verify NFT properties
+            assert!(mock_target::nft_value(&nft) == 1000, 729);
+
+            // Transfer NFT to recipient
+            transfer::public_transfer(nft, RECIPIENT);
+
+            ts::return_shared(wallet);
+            ts::return_shared(vault);
+            ts::return_shared(registry);
+            ts::return_shared(proposal);
+        };
+
+        clock::destroy_for_testing(clock);
+        ts::end(scenario);
+    }
+
+    /// Test: Vault can hold both coins and NFTs simultaneously
+    #[test]
+    fun test_vault_holds_coins_and_nfts() {
+        let mut scenario = ts::begin(ADMIN);
+        let clock = clock::create_for_testing(ts::ctx(&mut scenario));
+
+        ts::next_tx(&mut scenario, ADMIN);
+        { registry::init_for_testing(ts::ctx(&mut scenario)); };
+
+        // Create wallet
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let mut registry = ts::take_shared<MultisigRegistry>(&scenario);
+            let wallet = wallet::create_wallet(
+                &mut registry,
+                std::string::utf8(b"Mixed Vault"),
+                vector[ALICE],
+                1,
+                mint_sui(5_000_000_000, ts::ctx(&mut scenario)),
+                &clock,
+                ts::ctx(&mut scenario),
+            );
+            ts::return_shared(registry);
+            transfer::public_share_object(wallet);
+        };
+
+        // Deposit coins and NFTs
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let mut vault = ts::take_shared<MultisigVault>(&scenario);
+
+            // Deposit SUI
+            vault::deposit(&mut vault, mint_sui(100_000_000_000, ts::ctx(&mut scenario)), ts::ctx(&mut scenario));
+
+            // Deposit tokens
+            vault::deposit(&mut vault, test_coins::mint_token_a(200_000_000_000, ts::ctx(&mut scenario)), ts::ctx(&mut scenario));
+
+            // Deposit NFTs
+            let nft1 = mock_target::create_nft(
+                std::string::utf8(b"NFT 1"),
+                100,
+                ts::ctx(&mut scenario),
+            );
+            let nft1_id = mock_target::nft_id(&nft1);
+
+            let nft2 = mock_target::create_nft2(
+                std::string::utf8(b"NFT 2"),
+                ts::ctx(&mut scenario),
+            );
+            let nft2_id = mock_target::nft2_id(&nft2);
+
+            vault::deposit_nft(&mut vault, nft1, ts::ctx(&mut scenario));
+            vault::deposit_nft(&mut vault, nft2, ts::ctx(&mut scenario));
+
+            // Verify both coins and NFTs exist
+            assert!(vault::balance<SUI>(&vault) == 100_000_000_000, 730);
+            assert!(vault::balance<TEST_TOKEN_A>(&vault) == 200_000_000_000, 731);
+            assert!(vault::nft_count(&vault) == 2, 732);
+            assert!(vault::has_nft(&vault, nft1_id), 733);
+            assert!(vault::has_nft(&vault, nft2_id), 734);
+
+            ts::return_shared(vault);
+        };
+
+        clock::destroy_for_testing(clock);
+        ts::end(scenario);
+    }
 }

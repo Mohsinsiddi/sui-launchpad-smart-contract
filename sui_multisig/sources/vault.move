@@ -1,9 +1,11 @@
 /// Vault module for storing multisig wallet assets
 /// Treats all coins uniformly - SUI is just Coin<SUI>
+/// Also supports NFT storage via ObjectBag
 module sui_multisig::vault {
     use sui::coin::{Self, Coin};
     use sui::balance::{Self, Balance};
     use sui::bag::{Self, Bag};
+    use sui::object_bag::{Self, ObjectBag};
 
     use sui_multisig::errors;
     use sui_multisig::events;
@@ -14,12 +16,17 @@ module sui_multisig::vault {
 
     /// Vault for storing wallet assets
     /// All token balances are stored uniformly in a Bag keyed by type name
+    /// NFTs are stored in an ObjectBag keyed by object ID
     public struct MultisigVault has key {
         id: UID,
         /// Associated wallet ID
         wallet_id: ID,
         /// All token balances keyed by type name (including SUI)
         balances: Bag,
+        /// NFT storage keyed by object ID
+        nfts: ObjectBag,
+        /// Count of NFTs stored
+        nft_count: u64,
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -35,6 +42,8 @@ module sui_multisig::vault {
             id: object::new(ctx),
             wallet_id,
             balances: bag::new(ctx),
+            nfts: object_bag::new(ctx),
+            nft_count: 0,
         };
         let vault_id = object::id(&vault);
         transfer::share_object(vault);
@@ -108,6 +117,58 @@ module sui_multisig::vault {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
+    // NFT FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Deposit any NFT into the vault
+    /// NFT must have key + store abilities
+    public fun deposit_nft<T: key + store>(
+        vault: &mut MultisigVault,
+        nft: T,
+        ctx: &TxContext,
+    ) {
+        let nft_id = object::id(&nft);
+        let type_name = std::type_name::get<T>();
+        let type_string = std::type_name::into_string(type_name);
+
+        vault.nfts.add(nft_id, nft);
+        vault.nft_count = vault.nft_count + 1;
+
+        events::emit_nft_deposited(
+            object::id(vault),
+            vault.wallet_id,
+            nft_id,
+            type_string,
+            ctx.sender(),
+        );
+    }
+
+    /// Withdraw an NFT from the vault (called by proposal execution)
+    public(package) fun withdraw_nft<T: key + store>(
+        vault: &mut MultisigVault,
+        nft_id: ID,
+        recipient: address,
+    ): T {
+        assert!(vault.nfts.contains(nft_id), errors::nft_not_found());
+
+        let nft: T = vault.nfts.remove(nft_id);
+        vault.nft_count = vault.nft_count - 1;
+
+        let type_name = std::type_name::get<T>();
+        let type_string = std::type_name::into_string(type_name);
+
+        events::emit_nft_withdrawn(
+            object::id(vault),
+            vault.wallet_id,
+            nft_id,
+            type_string,
+            recipient,
+        );
+
+        nft
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // GETTERS
     // ═══════════════════════════════════════════════════════════════════════
 
@@ -139,6 +200,16 @@ module sui_multisig::vault {
         vault.balances.contains(type_string)
     }
 
+    /// Check if vault has a specific NFT by ID
+    public fun has_nft(vault: &MultisigVault, nft_id: ID): bool {
+        vault.nfts.contains(nft_id)
+    }
+
+    /// Get count of NFTs in vault
+    public fun nft_count(vault: &MultisigVault): u64 {
+        vault.nft_count
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // TEST HELPERS
     // ═══════════════════════════════════════════════════════════════════════
@@ -149,6 +220,8 @@ module sui_multisig::vault {
             id: object::new(ctx),
             wallet_id,
             balances: bag::new(ctx),
+            nfts: object_bag::new(ctx),
+            nft_count: 0,
         }
     }
 
@@ -158,10 +231,22 @@ module sui_multisig::vault {
             id,
             wallet_id: _,
             balances,
+            nfts,
+            nft_count: _,
         } = vault;
 
         object::delete(id);
         balances.destroy_empty();
+        nfts.destroy_empty();
+    }
+
+    #[test_only]
+    public fun withdraw_nft_for_testing<T: key + store>(
+        vault: &mut MultisigVault,
+        nft_id: ID,
+        recipient: address,
+    ): T {
+        withdraw_nft<T>(vault, nft_id, recipient)
     }
 
     #[test_only]

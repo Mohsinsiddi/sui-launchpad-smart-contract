@@ -31,6 +31,7 @@ module sui_multisig::proposal {
     const ACTION_REMOVE_SIGNER: u8 = 2;
     const ACTION_CHANGE_THRESHOLD: u8 = 3;
     const ACTION_CUSTOM_TX: u8 = 4;       // Custom transaction authorization
+    const ACTION_NFT_TRANSFER: u8 = 5;    // NFT transfer
 
     // ═══════════════════════════════════════════════════════════════════════
     // STRUCTS
@@ -73,10 +74,12 @@ module sui_multisig::proposal {
         token_type: std::ascii::String,
         /// New threshold value (for threshold change)
         new_threshold: u64,
-        /// Target object ID (for custom tx)
+        /// Target object ID (for custom tx or NFT transfer)
         target_id: ID,
         /// Function name (for custom tx - informational)
         function_name: std::string::String,
+        /// NFT type name (for NFT transfers)
+        nft_type: std::ascii::String,
     }
 
     /// Authorization "hot potato" for custom transactions
@@ -120,6 +123,7 @@ module sui_multisig::proposal {
             new_threshold: 0,
             target_id: object::id_from_address(@0x0),
             function_name: std::string::utf8(b""),
+            nft_type: std::ascii::string(b""),
         };
 
         create_proposal_internal(wallet, registry, action, description, clock, ctx)
@@ -142,6 +146,7 @@ module sui_multisig::proposal {
             new_threshold: 0,
             target_id: object::id_from_address(@0x0),
             function_name: std::string::utf8(b""),
+            nft_type: std::ascii::string(b""),
         };
 
         create_proposal_internal(wallet, registry, action, description, clock, ctx)
@@ -164,6 +169,7 @@ module sui_multisig::proposal {
             new_threshold: 0,
             target_id: object::id_from_address(@0x0),
             function_name: std::string::utf8(b""),
+            nft_type: std::ascii::string(b""),
         };
 
         create_proposal_internal(wallet, registry, action, description, clock, ctx)
@@ -186,6 +192,7 @@ module sui_multisig::proposal {
             new_threshold,
             target_id: object::id_from_address(@0x0),
             function_name: std::string::utf8(b""),
+            nft_type: std::ascii::string(b""),
         };
 
         create_proposal_internal(wallet, registry, action, description, clock, ctx)
@@ -211,6 +218,34 @@ module sui_multisig::proposal {
             new_threshold: 0,
             target_id,
             function_name,
+            nft_type: std::ascii::string(b""),
+        };
+
+        create_proposal_internal(wallet, registry, action, description, clock, ctx)
+    }
+
+    /// Create a proposal to transfer an NFT
+    public fun propose_nft_transfer<T: key + store>(
+        wallet: &MultisigWallet,
+        registry: &MultisigRegistry,
+        nft_id: ID,
+        recipient: address,
+        description: std::string::String,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): MultisigProposal {
+        let type_name = std::type_name::get<T>();
+        let type_string = std::type_name::into_string(type_name);
+
+        let action = ProposalAction {
+            action_type: ACTION_NFT_TRANSFER,
+            recipient,
+            amount: 0,
+            token_type: std::ascii::string(b""),
+            new_threshold: 0,
+            target_id: nft_id,
+            function_name: std::string::utf8(b""),
+            nft_type: type_string,
         };
 
         create_proposal_internal(wallet, registry, action, description, clock, ctx)
@@ -564,6 +599,47 @@ module sui_multisig::proposal {
         }
     }
 
+    /// Execute an NFT transfer proposal
+    public fun execute_nft_transfer<T: key + store>(
+        proposal: &mut MultisigProposal,
+        wallet: &mut MultisigWallet,
+        vault: &mut MultisigVault,
+        registry: &mut MultisigRegistry,
+        execution_fee: Coin<SUI>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): T {
+        // Validate execution conditions
+        validate_execution(proposal, wallet, vault, clock, ctx);
+        assert!(proposal.action.action_type == ACTION_NFT_TRANSFER, errors::proposal_not_ready());
+
+        // Validate NFT type matches
+        let type_name = std::type_name::get<T>();
+        let type_string = std::type_name::into_string(type_name);
+        assert!(proposal.action.nft_type == type_string, errors::nft_type_mismatch());
+
+        // Collect execution fee
+        registry.collect_execution_fee(execution_fee);
+
+        // Mark as executed
+        proposal.status = STATUS_EXECUTED;
+        wallet.increment_nonce();
+
+        // Get NFT details
+        let nft_id = proposal.action.target_id;
+        let recipient = proposal.action.recipient;
+
+        events::emit_proposal_executed(
+            object::id(proposal),
+            wallet.wallet_id(),
+            ctx.sender(),
+            ACTION_NFT_TRANSFER,
+        );
+
+        // Withdraw NFT and return it (caller transfers to recipient)
+        vault::withdraw_nft<T>(vault, nft_id, recipient)
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // AUTHORIZATION CONSUMPTION
     // ═══════════════════════════════════════════════════════════════════════
@@ -710,6 +786,7 @@ module sui_multisig::proposal {
     public fun action_type_remove_signer(): u8 { ACTION_REMOVE_SIGNER }
     public fun action_type_change_threshold(): u8 { ACTION_CHANGE_THRESHOLD }
     public fun action_type_custom_tx(): u8 { ACTION_CUSTOM_TX }
+    public fun action_type_nft_transfer(): u8 { ACTION_NFT_TRANSFER }
 
     // Action getters
     public fun action_recipient(proposal: &MultisigProposal): address {
@@ -734,6 +811,15 @@ module sui_multisig::proposal {
 
     public fun action_function_name(proposal: &MultisigProposal): std::string::String {
         proposal.action.function_name
+    }
+
+    public fun action_nft_type(proposal: &MultisigProposal): std::ascii::String {
+        proposal.action.nft_type
+    }
+
+    /// Get NFT ID for NFT transfer proposals (alias for target_id)
+    public fun action_nft_id(proposal: &MultisigProposal): ID {
+        proposal.action.target_id
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -770,6 +856,7 @@ module sui_multisig::proposal {
                 new_threshold,
                 target_id: object::id_from_address(@0x0),
                 function_name: std::string::utf8(b""),
+                nft_type: std::ascii::string(b""),
             },
             expires_at_ms,
             description: std::string::utf8(b"Test proposal"),

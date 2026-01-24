@@ -104,6 +104,24 @@ module sui_multisig::events {
         amount: u64,
     }
 
+    /// Emitted when an NFT is deposited
+    public struct NftDeposited has copy, drop {
+        vault_id: ID,
+        wallet_id: ID,
+        nft_id: ID,
+        nft_type: std::ascii::String,
+        depositor: address,
+    }
+
+    /// Emitted when an NFT is withdrawn
+    public struct NftWithdrawn has copy, drop {
+        vault_id: ID,
+        wallet_id: ID,
+        nft_id: ID,
+        nft_type: std::ascii::String,
+        recipient: address,
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // CUSTOM TX EVENTS
     // ═══════════════════════════════════════════════════════════════════════
@@ -286,6 +304,38 @@ module sui_multisig::events {
             token_type,
             recipient,
             amount,
+        });
+    }
+
+    public fun emit_nft_deposited(
+        vault_id: ID,
+        wallet_id: ID,
+        nft_id: ID,
+        nft_type: std::ascii::String,
+        depositor: address,
+    ) {
+        event::emit(NftDeposited {
+            vault_id,
+            wallet_id,
+            nft_id,
+            nft_type,
+            depositor,
+        });
+    }
+
+    public fun emit_nft_withdrawn(
+        vault_id: ID,
+        wallet_id: ID,
+        nft_id: ID,
+        nft_type: std::ascii::String,
+        recipient: address,
+    ) {
+        event::emit(NftWithdrawn {
+            vault_id,
+            wallet_id,
+            nft_id,
+            nft_type,
+            recipient,
         });
     }
 

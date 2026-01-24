@@ -21,6 +21,22 @@ module sui_multisig::mock_target {
         paused: bool,
     }
 
+    /// A mock NFT for testing NFT vault operations
+    public struct MockNFT has key, store {
+        id: UID,
+        /// NFT name
+        name: std::string::String,
+        /// NFT value/rarity
+        value: u64,
+    }
+
+    /// Another mock NFT type for testing multiple NFT types
+    public struct MockNFT2 has key, store {
+        id: UID,
+        /// NFT description
+        description: std::string::String,
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // INITIALIZATION
     // ═══════════════════════════════════════════════════════════════════════
@@ -33,6 +49,30 @@ module sui_multisig::mock_target {
             last_wallet_id: option::none(),
             value: 0,
             paused: false,
+        }
+    }
+
+    /// Create a new mock NFT
+    public fun create_nft(
+        name: std::string::String,
+        value: u64,
+        ctx: &mut TxContext,
+    ): MockNFT {
+        MockNFT {
+            id: object::new(ctx),
+            name,
+            value,
+        }
+    }
+
+    /// Create a new mock NFT2
+    public fun create_nft2(
+        description: std::string::String,
+        ctx: &mut TxContext,
+    ): MockNFT2 {
+        MockNFT2 {
+            id: object::new(ctx),
+            description,
         }
     }
 
@@ -144,6 +184,44 @@ module sui_multisig::mock_target {
             value: _,
             paused: _,
         } = treasury;
+        object::delete(id);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // NFT GETTERS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    public fun nft_id(nft: &MockNFT): ID {
+        object::id(nft)
+    }
+
+    public fun nft_name(nft: &MockNFT): std::string::String {
+        nft.name
+    }
+
+    public fun nft_value(nft: &MockNFT): u64 {
+        nft.value
+    }
+
+    public fun nft2_id(nft: &MockNFT2): ID {
+        object::id(nft)
+    }
+
+    public fun nft2_description(nft: &MockNFT2): std::string::String {
+        nft.description
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // NFT CLEANUP
+    // ═══════════════════════════════════════════════════════════════════════
+
+    public fun destroy_nft(nft: MockNFT) {
+        let MockNFT { id, name: _, value: _ } = nft;
+        object::delete(id);
+    }
+
+    public fun destroy_nft2(nft: MockNFT2) {
+        let MockNFT2 { id, description: _ } = nft;
         object::delete(id);
     }
 }
