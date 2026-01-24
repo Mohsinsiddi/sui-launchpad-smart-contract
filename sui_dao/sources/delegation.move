@@ -175,10 +175,12 @@ module sui_dao::delegation {
         assert!(delegation.governance_id == object::id(governance), errors::wrong_governance());
 
         // Cast vote using the delegation
+        // Pass position_id to prevent double voting (direct + delegation)
         proposal::cast_vote_with_delegation(
             proposal,
             ctx.sender(),
             delegation.delegator,
+            delegation.position_id,
             support,
             delegation.voting_power,
             clock,

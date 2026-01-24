@@ -276,13 +276,15 @@ module sui_staking::pool {
         // Update pool rewards
         update_pool_rewards(pool, current_time);
 
-        // Claim pending rewards first
+        // Claim pending rewards first (only if pool has sufficient balance)
         let pending = position::calculate_pending_rewards(position, pool.acc_reward_per_share);
-        let reward_coin = if (pending > 0) {
+        let available_rewards = balance::value(&pool.reward_balance);
+        let reward_coin = if (pending > 0 && available_rewards >= pending) {
             let reward_balance = balance::split(&mut pool.reward_balance, pending);
             pool.total_rewards_distributed = pool.total_rewards_distributed + pending;
             coin::from_balance(reward_balance, ctx)
         } else {
+            // If insufficient rewards, still allow staking but return zero rewards
             coin::zero(ctx)
         };
 

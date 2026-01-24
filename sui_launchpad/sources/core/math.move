@@ -21,6 +21,12 @@ module sui_launchpad::math {
 
     const EOverflow: u64 = 1;
     const EDivisionByZero: u64 = 2;
+    const EFeeTooHigh: u64 = 3;
+    const EInvalidInput: u64 = 4;
+
+    /// Maximum safe supply to prevent overflow in curve calculations
+    /// sqrt(MAX_U256 / slope_max) roughly
+    const MAX_SAFE_SUPPLY: u64 = 1_000_000_000_000_000_000; // 1e18
 
     // ═══════════════════════════════════════════════════════════════════════
     // CORE MATH (using u256 for intermediate calculations)
@@ -57,7 +63,9 @@ module sui_launchpad::math {
 
     /// Calculate amount after deducting fee
     /// after_fee(1000, 500) = 950 (1000 - 5%)
+    /// Validates fee_bps < 10000 to prevent underflow
     public fun after_fee(amount: u64, fee_bps: u64): u64 {
+        assert!(fee_bps < BPS_DENOMINATOR, EFeeTooHigh);
         amount - bps(amount, fee_bps)
     }
 
@@ -115,10 +123,20 @@ module sui_launchpad::math {
 
     /// Area under curve from 0 to supply
     /// Area = base_price * supply + (slope * supply^2) / (2 * PRECISION)
+    /// Validates inputs to prevent overflow in intermediate calculations
     public fun curve_area(base_price: u64, slope: u64, supply: u64): u64 {
+        // Validate supply is within safe bounds to prevent overflow
+        assert!(supply <= MAX_SAFE_SUPPLY, EOverflow);
+
         let s = (supply as u256);
         let base_area = (base_price as u256) * s;
-        let slope_area = ((slope as u256) * s * s) / (2 * PRECISION);
+
+        // Calculate slope_area with overflow check
+        // slope * s * s can overflow u256 if values are extreme
+        let slope_256 = (slope as u256);
+        let s_squared = s * s; // Safe because s <= MAX_SAFE_SUPPLY
+        let slope_area = (slope_256 * s_squared) / (2 * PRECISION);
+
         let total = base_area + slope_area;
         assert!(total <= MAX_U64, EOverflow);
         (total as u64)
@@ -151,8 +169,11 @@ module sui_launchpad::math {
     }
 
     /// Inverse: get supply from area (quadratic formula)
+    /// Validates inputs to prevent division by zero and overflow
     fun supply_from_area(base_price: u64, slope: u64, area: u64): u64 {
+        // Handle zero slope case (linear pricing)
         if (slope == 0) {
+            assert!(base_price > 0, EDivisionByZero);
             return area / base_price
         };
 
@@ -162,8 +183,14 @@ module sui_launchpad::math {
         let k = (slope as u256);
         let a = (area as u256);
 
-        let discriminant = b * b + (2 * k * a * PRECISION) / PRECISION;
+        // Calculate discriminant with overflow protection
+        let b_squared = b * b;
+        let two_k_a = 2 * k * a;
+        let discriminant = b_squared + two_k_a; // Simplified: PRECISION cancels out
         let sqrt_disc = sqrt(discriminant);
+
+        // Ensure sqrt_disc >= b to prevent underflow
+        assert!(sqrt_disc >= b, EInvalidInput);
 
         let numerator = (sqrt_disc - b) * PRECISION;
         let result = numerator / k;

@@ -663,11 +663,14 @@ module sui_launchpad::config {
     }
 
     /// Set DAO treasury address (for LP/Position transfers)
+    /// DAO treasury must be different from platform treasury to ensure proper fund separation
     public fun set_dao_treasury(
         _admin: &AdminCap,
         config: &mut LaunchpadConfig,
         new_dao_treasury: address,
     ) {
+        // Ensure DAO treasury is different from platform treasury
+        assert!(new_dao_treasury != config.treasury, EDAOTreasurySameAsPlatform);
         config.dao_treasury = new_dao_treasury;
         event::emit(TreasuryUpdated { old_treasury: @0x0, new_treasury: new_dao_treasury });
     }

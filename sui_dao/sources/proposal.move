@@ -372,19 +372,25 @@ module sui_dao::proposal {
     }
 
     /// Cast a vote with delegated power
+    /// IMPORTANT: Also tracks position_id to prevent double voting where user votes
+    /// directly with position AND delegate votes with same position via delegation
     public(package) fun cast_vote_with_delegation(
         proposal: &mut Proposal,
         voter: address,
         delegator: address,
+        position_id: ID,
         support: u8,
         voting_power: u64,
         clock: &Clock,
     ) {
         assert_voting_active(proposal, clock);
+        // Check BOTH delegator address AND position_id to prevent double voting
         assert!(!proposal.voters.contains(&delegator), errors::already_voted());
+        assert!(!proposal.voted_positions.contains(&position_id), errors::already_voted());
         assert!(support <= VOTE_ABSTAIN, errors::invalid_vote_option());
 
         proposal.voters.insert(delegator);
+        proposal.voted_positions.insert(position_id);
 
         apply_vote(proposal, support, voting_power);
 

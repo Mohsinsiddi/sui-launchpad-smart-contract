@@ -51,6 +51,7 @@ module sui_staking::math {
 
     /// Calculate new accumulated reward per share
     /// acc_reward_per_share += (rewards * PRECISION) / total_staked
+    /// With overflow protection
     public fun calculate_acc_reward_per_share(
         current_acc: u128,
         new_rewards: u64,
@@ -62,21 +63,37 @@ module sui_staking::math {
 
         let rewards_128 = (new_rewards as u128);
         let total_staked_128 = (total_staked as u128);
+        let increment = (rewards_128 * PRECISION) / total_staked_128;
 
-        current_acc + (rewards_128 * PRECISION) / total_staked_128
+        // Check for overflow before addition
+        let max_u128: u128 = 340_282_366_920_938_463_463_374_607_431_768_211_455;
+        if (current_acc > max_u128 - increment) {
+            // Cap at max instead of overflowing
+            max_u128
+        } else {
+            current_acc + increment
+        }
     }
 
     /// Calculate rewards earned since last update
     /// rewards = time_elapsed_ms * reward_rate
+    /// With overflow protection - caps at MAX_U64 instead of wrapping
     public fun calculate_rewards_earned(
         time_elapsed_ms: u64,
         reward_rate: u64,
     ): u64 {
-        // Use u128 to prevent overflow
+        // Use u128 to prevent overflow in multiplication
         let time_128 = (time_elapsed_ms as u128);
         let rate_128 = (reward_rate as u128);
+        let result = time_128 * rate_128;
 
-        ((time_128 * rate_128) as u64)
+        // Check if result overflows u64, cap at MAX_U64 if so
+        let max_u64: u128 = 18_446_744_073_709_551_615;
+        if (result > max_u64) {
+            (max_u64 as u64)
+        } else {
+            (result as u64)
+        }
     }
 
     /// Calculate pending rewards for a position
