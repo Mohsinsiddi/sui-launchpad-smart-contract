@@ -100,6 +100,52 @@ module sui_launchpad::test_utils {
         pool_id
     }
 
+    /// Setup launchpad and create a pool in one call
+    /// Useful for tests that need a pool registered in the registry
+    public fun setup_launchpad_with_pool(
+        scenario: &mut Scenario,
+        pool_creator: address,
+    ): ID {
+        use sui_launchpad::registry::Registry;
+
+        // First setup launchpad
+        setup_launchpad(scenario);
+
+        // Create pool as the specified creator
+        scenario.next_tx(pool_creator);
+
+        let (treasury_cap, metadata) = test_coin::create_test_coin(scenario.ctx());
+        let config = scenario.take_shared<LaunchpadConfig>();
+        let mut token_registry = scenario.take_shared<Registry>();
+        let clock = create_clock(scenario);
+
+        let creation_fee = config::creation_fee(&config);
+        let payment = mint_sui(creation_fee, scenario);
+
+        let pool = bonding_curve::create_pool(
+            &config,
+            treasury_cap,
+            &metadata,
+            0, // no creator fee
+            payment,
+            &clock,
+            scenario.ctx(),
+        );
+
+        // Register in registry
+        registry::register_pool(&mut token_registry, &pool, scenario.ctx());
+
+        let pool_id = object::id(&pool);
+        transfer::public_share_object(pool);
+
+        sui::test_scenario::return_shared(config);
+        sui::test_scenario::return_shared(token_registry);
+        transfer::public_freeze_object(metadata);
+        clock::destroy_for_testing(clock);
+
+        pool_id
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // ASSERTION HELPERS
     // ═══════════════════════════════════════════════════════════════════════

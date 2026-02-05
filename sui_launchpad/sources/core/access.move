@@ -228,4 +228,143 @@ module sui_launchpad::access {
 
         scenario.end();
     }
+
+    #[test]
+    fun test_revoke_operator_cap() {
+        use sui::test_scenario;
+
+        let admin = @0xAD;
+        let operator = @0x0B;
+        let mut scenario = test_scenario::begin(admin);
+
+        // Create admin cap
+        {
+            let ctx = scenario.ctx();
+            let admin_cap = create_admin_cap(ctx);
+            transfer::public_transfer(admin_cap, admin);
+        };
+
+        // Admin creates operator cap
+        scenario.next_tx(admin);
+        {
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+            create_operator_cap(&admin_cap, operator, scenario.ctx());
+            scenario.return_to_sender(admin_cap);
+        };
+
+        // Admin revokes operator cap
+        scenario.next_tx(admin);
+        {
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+            let operator_cap = scenario.take_from_address<OperatorCap>(operator);
+            revoke_operator_cap(&admin_cap, operator_cap, scenario.ctx());
+            scenario.return_to_sender(admin_cap);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_cap_id_getters() {
+        use sui::test_scenario;
+
+        let admin = @0xAD;
+        let operator = @0x0B;
+        let mut scenario = test_scenario::begin(admin);
+
+        // Create caps
+        {
+            let ctx = scenario.ctx();
+            let admin_cap = create_admin_cap(ctx);
+            let treasury_cap = create_treasury_cap(ctx);
+            transfer::public_transfer(admin_cap, admin);
+            transfer::public_transfer(treasury_cap, admin);
+        };
+
+        // Create operator cap
+        scenario.next_tx(admin);
+        {
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+            create_operator_cap(&admin_cap, operator, scenario.ctx());
+            scenario.return_to_sender(admin_cap);
+        };
+
+        // Test ID getters
+        scenario.next_tx(admin);
+        {
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+            let treasury_cap = scenario.take_from_sender<TreasuryCap>();
+
+            // Test admin_cap_id
+            let aid = admin_cap_id(&admin_cap);
+            assert!(aid == object::id(&admin_cap), 0);
+
+            // Test treasury_cap_id
+            let tid = treasury_cap_id(&treasury_cap);
+            assert!(tid == object::id(&treasury_cap), 1);
+
+            scenario.return_to_sender(admin_cap);
+            scenario.return_to_sender(treasury_cap);
+        };
+
+        // Test operator_cap_id
+        scenario.next_tx(operator);
+        {
+            let operator_cap = scenario.take_from_sender<OperatorCap>();
+            let oid = operator_cap_id(&operator_cap);
+            assert!(oid == object::id(&operator_cap), 2);
+            scenario.return_to_sender(operator_cap);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_assert_functions() {
+        use sui::test_scenario;
+
+        let admin = @0xAD;
+        let operator = @0x0B;
+        let mut scenario = test_scenario::begin(admin);
+
+        // Create all caps
+        {
+            let ctx = scenario.ctx();
+            let admin_cap = create_admin_cap(ctx);
+            let treasury_cap = create_treasury_cap(ctx);
+            transfer::public_transfer(admin_cap, admin);
+            transfer::public_transfer(treasury_cap, admin);
+        };
+
+        // Create operator cap
+        scenario.next_tx(admin);
+        {
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+            create_operator_cap(&admin_cap, operator, scenario.ctx());
+            scenario.return_to_sender(admin_cap);
+        };
+
+        // Test assert_admin and assert_treasury
+        scenario.next_tx(admin);
+        {
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+            let treasury_cap = scenario.take_from_sender<TreasuryCap>();
+
+            assert_admin(&admin_cap);
+            assert_treasury(&treasury_cap);
+
+            scenario.return_to_sender(admin_cap);
+            scenario.return_to_sender(treasury_cap);
+        };
+
+        // Test assert_operator
+        scenario.next_tx(operator);
+        {
+            let operator_cap = scenario.take_from_sender<OperatorCap>();
+            assert_operator(&operator_cap);
+            scenario.return_to_sender(operator_cap);
+        };
+
+        scenario.end();
+    }
 }

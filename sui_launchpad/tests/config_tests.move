@@ -866,4 +866,704 @@ module sui_launchpad::config_tests {
 
         scenario.end();
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STAKING INTEGRATION CONFIG TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_staking_config_defaults() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let config = scenario.take_shared<LaunchpadConfig>();
+
+            // Verify staking defaults
+            assert!(config::staking_enabled(&config), 0);
+            assert!(config::staking_reward_bps(&config) == 500, 1); // 5%
+            assert!(config::staking_duration_ms(&config) == 31_536_000_000, 2); // 365 days
+            assert!(config::staking_min_duration_ms(&config) == 604_800_000, 3); // 7 days
+            assert!(config::staking_early_fee_bps(&config) == 500, 4); // 5%
+            assert!(config::staking_stake_fee_bps(&config) == 0, 5);
+            assert!(config::staking_unstake_fee_bps(&config) == 0, 6);
+            assert!(config::staking_admin_destination(&config) == 0, 7); // creator
+            assert!(config::staking_reward_type(&config) == 0, 8); // same token
+
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_staking_enabled() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Disable staking
+            config::set_staking_enabled(&admin_cap, &mut config, false);
+            assert!(!config::staking_enabled(&config), 0);
+
+            // Enable staking
+            config::set_staking_enabled(&admin_cap, &mut config, true);
+            assert!(config::staking_enabled(&config), 1);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_staking_reward_bps() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Set to 10% (max allowed)
+            config::set_staking_reward_bps(&admin_cap, &mut config, 1000);
+            assert!(config::staking_reward_bps(&config) == 1000, 0);
+
+            // Set to 0%
+            config::set_staking_reward_bps(&admin_cap, &mut config, 0);
+            assert!(config::staking_reward_bps(&config) == 0, 1);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_staking_duration() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Set to 30 days
+            let thirty_days = 2_592_000_000;
+            config::set_staking_duration_ms(&admin_cap, &mut config, thirty_days);
+            assert!(config::staking_duration_ms(&config) == thirty_days, 0);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_staking_fees() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Set early fee
+            config::set_staking_early_fee_bps(&admin_cap, &mut config, 300);
+            assert!(config::staking_early_fee_bps(&config) == 300, 0);
+
+            // Set stake fee
+            config::set_staking_stake_fee_bps(&admin_cap, &mut config, 100);
+            assert!(config::staking_stake_fee_bps(&config) == 100, 1);
+
+            // Set unstake fee
+            config::set_staking_unstake_fee_bps(&admin_cap, &mut config, 50);
+            assert!(config::staking_unstake_fee_bps(&config) == 50, 2);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_staking_admin_destination() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Test all destinations
+            config::set_staking_admin_destination(&admin_cap, &mut config, 0); // creator
+            assert!(config::staking_admin_destination(&config) == 0, 0);
+
+            config::set_staking_admin_destination(&admin_cap, &mut config, 1); // dao
+            assert!(config::staking_admin_destination(&config) == 1, 1);
+
+            config::set_staking_admin_destination(&admin_cap, &mut config, 2); // platform
+            assert!(config::staking_admin_destination(&config) == 2, 2);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_staking_reward_type() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Test all reward types
+            config::set_staking_reward_type(&admin_cap, &mut config, 0); // same token
+            assert!(config::staking_reward_type(&config) == 0, 0);
+
+            config::set_staking_reward_type(&admin_cap, &mut config, 1); // sui
+            assert!(config::staking_reward_type(&config) == 1, 1);
+
+            config::set_staking_reward_type(&admin_cap, &mut config, 2); // custom
+            assert!(config::staking_reward_type(&config) == 2, 2);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // DAO INTEGRATION CONFIG TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_dao_config_defaults() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let config = scenario.take_shared<LaunchpadConfig>();
+
+            // Verify DAO defaults
+            assert!(config::dao_enabled(&config), 0);
+            assert!(config::dao_quorum_bps(&config) == 400, 1); // 4%
+            assert!(config::dao_voting_delay_ms(&config) == 86_400_000, 2); // 1 day
+            assert!(config::dao_voting_period_ms(&config) == 259_200_000, 3); // 3 days
+            assert!(config::dao_timelock_delay_ms(&config) == 172_800_000, 4); // 2 days
+            assert!(config::dao_proposal_threshold_bps(&config) == 100, 5); // 1%
+            assert!(!config::dao_council_enabled(&config), 6);
+            assert!(config::dao_admin_destination(&config) == 1, 7); // dao_treasury
+
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_dao_enabled() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            config::set_dao_enabled(&admin_cap, &mut config, false);
+            assert!(!config::dao_enabled(&config), 0);
+
+            config::set_dao_enabled(&admin_cap, &mut config, true);
+            assert!(config::dao_enabled(&config), 1);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_dao_quorum() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            config::set_dao_quorum_bps(&admin_cap, &mut config, 1000); // 10%
+            assert!(config::dao_quorum_bps(&config) == 1000, 0);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_dao_voting_params() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Set voting delay (2 days)
+            config::set_dao_voting_delay_ms(&admin_cap, &mut config, 172_800_000);
+            assert!(config::dao_voting_delay_ms(&config) == 172_800_000, 0);
+
+            // Set voting period (5 days)
+            config::set_dao_voting_period_ms(&admin_cap, &mut config, 432_000_000);
+            assert!(config::dao_voting_period_ms(&config) == 432_000_000, 1);
+
+            // Set timelock delay (3 days)
+            config::set_dao_timelock_delay_ms(&admin_cap, &mut config, 259_200_000);
+            assert!(config::dao_timelock_delay_ms(&config) == 259_200_000, 2);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_dao_proposal_threshold() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            config::set_dao_proposal_threshold_bps(&admin_cap, &mut config, 500); // 5%
+            assert!(config::dao_proposal_threshold_bps(&config) == 500, 0);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_dao_council_enabled() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            config::set_dao_council_enabled(&admin_cap, &mut config, true);
+            assert!(config::dao_council_enabled(&config), 0);
+
+            config::set_dao_council_enabled(&admin_cap, &mut config, false);
+            assert!(!config::dao_council_enabled(&config), 1);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_dao_admin_destination() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Test all destinations
+            config::set_dao_admin_destination(&admin_cap, &mut config, 0); // creator
+            assert!(config::dao_admin_destination(&config) == 0, 0);
+
+            config::set_dao_admin_destination(&admin_cap, &mut config, 1); // dao_treasury
+            assert!(config::dao_admin_destination(&config) == 1, 1);
+
+            config::set_dao_admin_destination(&admin_cap, &mut config, 2); // platform
+            assert!(config::dao_admin_destination(&config) == 2, 2);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // LP DISTRIBUTION CONFIG TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_set_protocol_lp_bps() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            config::set_protocol_lp_bps(&admin_cap, &mut config, 500); // 5%
+            assert!(config::protocol_lp_bps(&config) == 500, 0);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_dao_lp_bps_calculation() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Default: creator=2.5%, protocol=2.5%, DAO=95%
+            assert!(config::dao_lp_bps(&config) == 9500, 0);
+
+            // Change creator to 10%
+            config::set_creator_lp_bps(&admin_cap, &mut config, 1000);
+            // DAO should now be 87.5%
+            assert!(config::dao_lp_bps(&config) == 8750, 1);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_min_graduation_liquidity() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            let new_min = 5_000_000_000_000; // 5000 SUI
+            config::set_min_graduation_liquidity(&admin_cap, &mut config, new_min);
+            assert!(config::min_graduation_liquidity(&config) == new_min, 0);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_platform_allocation() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            config::set_platform_allocation(&admin_cap, &mut config, 200); // 2%
+            assert!(config::platform_allocation_bps(&config) == 200, 0);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // VALIDATION HELPER TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_assert_not_paused() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let config = scenario.take_shared<LaunchpadConfig>();
+
+            // Should not abort when not paused
+            config::assert_not_paused(&config);
+
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 102)] // EPaused
+    fun test_assert_not_paused_when_paused() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            config::set_paused(&admin_cap, &mut config, true);
+
+            // Should abort when paused
+            config::assert_not_paused(&config);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_get_dex_package() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Set package addresses (using valid hex addresses)
+            let cetus_pkg = @0xCE1;
+            let turbos_pkg = @0x7B2;
+            let flowx_pkg = @0xF13;
+            let suidex_pkg = @0x5D4;
+
+            config::set_cetus_package(&admin_cap, &mut config, cetus_pkg);
+            config::set_turbos_package(&admin_cap, &mut config, turbos_pkg);
+            config::set_flowx_package(&admin_cap, &mut config, flowx_pkg);
+            config::set_suidex_package(&admin_cap, &mut config, suidex_pkg);
+
+            // Verify get_dex_package returns correct addresses
+            assert!(config::get_dex_package(&config, config::dex_cetus()) == cetus_pkg, 0);
+            assert!(config::get_dex_package(&config, config::dex_turbos()) == turbos_pkg, 1);
+            assert!(config::get_dex_package(&config, config::dex_flowx()) == flowx_pkg, 2);
+            assert!(config::get_dex_package(&config, config::dex_suidex()) == suidex_pkg, 3);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STAKING CONSTANT TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_staking_constant_getters() {
+        // Admin destination constants
+        assert!(config::staking_admin_dest_creator() == 0, 0);
+        assert!(config::staking_admin_dest_dao() == 1, 1);
+        assert!(config::staking_admin_dest_platform() == 2, 2);
+
+        // Reward type constants
+        assert!(config::staking_reward_same_token() == 0, 3);
+        assert!(config::staking_reward_sui() == 1, 4);
+        assert!(config::staking_reward_custom() == 2, 5);
+
+        // Limits
+        assert!(config::max_staking_reward_bps() == 1000, 6); // 10%
+        assert!(config::min_staking_duration_ms() == 604_800_000, 7); // 7 days
+        assert!(config::max_staking_duration_ms() == 63_072_000_000, 8); // 2 years
+        assert!(config::max_min_stake_duration_ms() == 2_592_000_000, 9); // 30 days
+        assert!(config::max_stake_fee_bps() == 500, 10); // 5%
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // DAO CONSTANT TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_dao_constant_getters() {
+        // Admin destination constants
+        assert!(config::dao_admin_dest_creator() == 0, 0);
+        assert!(config::dao_admin_dest_dao_treasury() == 1, 1);
+        assert!(config::dao_admin_dest_platform() == 2, 2);
+
+        // Limits
+        assert!(config::max_dao_quorum_bps() == 5000, 3); // 50%
+        assert!(config::max_dao_proposal_threshold_bps() == 1000, 4); // 10%
+        assert!(config::min_dao_voting_delay_ms() == 3_600_000, 5); // 1 hour
+        assert!(config::max_dao_voting_delay_ms() == 604_800_000, 6); // 7 days
+        assert!(config::min_dao_voting_period_ms() == 86_400_000, 7); // 1 day
+        assert!(config::max_dao_voting_period_ms() == 1_209_600_000, 8); // 14 days
+        assert!(config::min_dao_timelock_delay_ms() == 3_600_000, 9); // 1 hour
+        assert!(config::max_dao_timelock_delay_ms() == 1_209_600_000, 10); // 14 days
+
+        // Defaults
+        assert!(config::default_dao_quorum_bps() == 400, 11); // 4%
+        assert!(config::default_dao_voting_delay_ms() == 86_400_000, 12); // 1 day
+        assert!(config::default_dao_voting_period_ms() == 259_200_000, 13); // 3 days
+        assert!(config::default_dao_timelock_delay_ms() == 172_800_000, 14); // 2 days
+        assert!(config::default_dao_proposal_threshold_bps() == 100, 15); // 1%
+    }
+
+    #[test]
+    fun test_fund_safety_limits() {
+        assert!(config::min_creation_fee() == 100_000_000, 0); // 0.1 SUI
+        assert!(config::max_total_graduation_allocation_bps() == 2000, 1); // 20%
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 122)] // ECreationFeeTooLow
+    fun test_creation_fee_below_minimum() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Try to set below minimum (0.1 SUI)
+            config::set_creation_fee(&admin_cap, &mut config, 50_000_000);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_staking_min_duration() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            // Set to 14 days
+            let fourteen_days = 1_209_600_000;
+            config::set_staking_min_duration_ms(&admin_cap, &mut config, fourteen_days);
+            assert!(config::staking_min_duration_ms(&config) == fourteen_days, 0);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_creator_lp_vesting() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            let new_cliff = 30_000_000_000; // 30 days
+            let new_vesting = 60_000_000_000; // 60 days
+            config::set_creator_lp_vesting(&admin_cap, &mut config, new_cliff, new_vesting);
+
+            assert!(config::creator_lp_cliff_ms(&config) == new_cliff, 0);
+            assert!(config::creator_lp_vesting_ms(&config) == new_vesting, 1);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_set_dao_lp_vesting() {
+        let mut scenario = test_scenario::begin(admin());
+
+        setup_config(&mut scenario);
+
+        scenario.next_tx(admin());
+        {
+            let mut config = scenario.take_shared<LaunchpadConfig>();
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+
+            let new_cliff = 10_000_000_000;
+            let new_vesting = 20_000_000_000;
+            config::set_dao_lp_vesting(&admin_cap, &mut config, new_cliff, new_vesting);
+
+            assert!(config::dao_lp_cliff_ms(&config) == new_cliff, 0);
+            assert!(config::dao_lp_vesting_ms(&config) == new_vesting, 1);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(config);
+        };
+
+        scenario.end();
+    }
 }

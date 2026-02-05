@@ -175,4 +175,171 @@ module sui_launchpad::registry_tests {
 
         scenario.end();
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // TESTS WITH REGISTERED POOLS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fun test_registry_after_pool_creation() {
+        let mut scenario = test_scenario::begin(admin());
+
+        // Full setup with pool creation
+        test_utils::setup_launchpad_with_pool(&mut scenario, creator());
+
+        scenario.next_tx(admin());
+        {
+            let registry = scenario.take_shared<Registry>();
+
+            // Verify counters
+            assert!(registry::total_tokens(&registry) == 1, 0);
+            assert!(registry::pool_count(&registry) == 1, 1);
+            assert!(registry::total_graduated(&registry) == 0, 2);
+
+            test_scenario::return_shared(registry);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_is_registered_after_pool_creation() {
+        let mut scenario = test_scenario::begin(admin());
+
+        test_utils::setup_launchpad_with_pool(&mut scenario, creator());
+
+        scenario.next_tx(admin());
+        {
+            let registry = scenario.take_shared<Registry>();
+
+            assert!(registry::is_registered<TEST_COIN>(&registry), 0);
+
+            test_scenario::return_shared(registry);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_get_pool_by_type_found() {
+        let mut scenario = test_scenario::begin(admin());
+
+        test_utils::setup_launchpad_with_pool(&mut scenario, creator());
+
+        scenario.next_tx(admin());
+        {
+            let registry = scenario.take_shared<Registry>();
+
+            let pool_opt = registry::get_pool_by_type<TEST_COIN>(&registry);
+            assert!(option::is_some(&pool_opt), 0);
+
+            test_scenario::return_shared(registry);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_get_pools_by_creator_with_pool() {
+        let mut scenario = test_scenario::begin(admin());
+
+        test_utils::setup_launchpad_with_pool(&mut scenario, creator());
+
+        scenario.next_tx(admin());
+        {
+            let registry = scenario.take_shared<Registry>();
+
+            let pools = registry::get_pools_by_creator(&registry, creator());
+            assert!(vector::length(&pools) == 1, 0);
+
+            test_scenario::return_shared(registry);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_get_creator_pool_count_with_pool() {
+        let mut scenario = test_scenario::begin(admin());
+
+        test_utils::setup_launchpad_with_pool(&mut scenario, creator());
+
+        scenario.next_tx(admin());
+        {
+            let registry = scenario.take_shared<Registry>();
+
+            assert!(registry::get_creator_pool_count(&registry, creator()) == 1, 0);
+
+            test_scenario::return_shared(registry);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_get_pools_pagination() {
+        let mut scenario = test_scenario::begin(admin());
+
+        test_utils::setup_launchpad_with_pool(&mut scenario, creator());
+
+        scenario.next_tx(admin());
+        {
+            let registry = scenario.take_shared<Registry>();
+
+            // Get pools with pagination
+            let pools = registry::get_pools(&registry, 0, 10);
+            assert!(vector::length(&pools) == 1, 0);
+
+            // Start beyond existing pools
+            let empty_pools = registry::get_pools(&registry, 1, 10);
+            assert!(vector::length(&empty_pools) == 0, 1);
+
+            test_scenario::return_shared(registry);
+        };
+
+        scenario.end();
+    }
+
+    #[test]
+    fun test_remove_pool() {
+        use sui_launchpad::access::AdminCap;
+        use sui_launchpad::bonding_curve::BondingPool;
+
+        let mut scenario = test_scenario::begin(admin());
+
+        test_utils::setup_launchpad_with_pool(&mut scenario, creator());
+
+        // Get pool ID before removal
+        scenario.next_tx(admin());
+        let pool_id = {
+            let pool = scenario.take_shared<BondingPool<TEST_COIN>>();
+            let pid = object::id(&pool);
+            test_scenario::return_shared(pool);
+            pid
+        };
+
+        // Remove pool
+        scenario.next_tx(admin());
+        {
+            let admin_cap = scenario.take_from_sender<AdminCap>();
+            let mut registry = scenario.take_shared<Registry>();
+
+            registry::remove_pool<TEST_COIN>(
+                &admin_cap,
+                &mut registry,
+                pool_id,
+                creator(),
+            );
+
+            // Verify removal
+            assert!(registry::total_tokens(&registry) == 0, 0);
+            assert!(!registry::is_registered<TEST_COIN>(&registry), 1);
+            assert!(registry::get_creator_pool_count(&registry, creator()) == 0, 2);
+
+            scenario.return_to_sender(admin_cap);
+            test_scenario::return_shared(registry);
+        };
+
+        scenario.end();
+    }
 }
