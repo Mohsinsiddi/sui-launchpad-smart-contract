@@ -203,10 +203,22 @@ module sui_staking::pool {
     // STAKING OPERATIONS
     // ═══════════════════════════════════════════════════════════════════════
 
-    /// Stake tokens and receive a position NFT
+    /// Stake tokens and receive a position NFT (no lock)
     public fun stake<StakeToken, RewardToken>(
         pool: &mut StakingPool<StakeToken, RewardToken>,
         stake_coins: Coin<StakeToken>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): StakingPosition<StakeToken> {
+        stake_with_lock(pool, stake_coins, position::lock_tier_none(), clock, ctx)
+    }
+
+    /// Stake tokens with optional lock tier for boosted rewards and voting power
+    /// Lock tiers: 0=none, 1=30d (1x), 2=90d (1.5x), 3=180d (2x), 4=365d (3x)
+    public fun stake_with_lock<StakeToken, RewardToken>(
+        pool: &mut StakingPool<StakeToken, RewardToken>,
+        stake_coins: Coin<StakeToken>,
+        lock_tier: u8,
         clock: &Clock,
         ctx: &mut TxContext,
     ): StakingPosition<StakeToken> {
@@ -221,6 +233,7 @@ module sui_staking::pool {
             assert!(current_time < pool.config.end_time_ms, errors::pool_ended());
         };
         assert!(amount >= MIN_STAKE_AMOUNT, errors::amount_too_small());
+        assert!(lock_tier <= position::lock_tier_365d(), errors::invalid_config());
 
         // Update pool rewards before any state changes
         update_pool_rewards(pool, current_time);
@@ -243,13 +256,14 @@ module sui_staking::pool {
         balance::join(&mut pool.stake_balance, stake_balance);
         pool.total_staked = pool.total_staked + net_stake_amount;
 
-        // Create position NFT with net staked amount
+        // Create position NFT with net staked amount and lock tier
         let pool_id = object::uid_to_inner(&pool.id);
-        let position = position::create<StakeToken>(
+        let position = position::create_with_lock<StakeToken>(
             pool_id,
             net_stake_amount,
             pool.acc_reward_per_share,
             current_time,
+            lock_tier,
             ctx,
         );
 
@@ -327,6 +341,7 @@ module sui_staking::pool {
     }
 
     /// Unstake tokens from a position (full unstake)
+    /// Note: Cannot unstake if position is locked (use emergency_unstake for locked positions)
     public fun unstake<StakeToken, RewardToken>(
         pool: &mut StakingPool<StakeToken, RewardToken>,
         position: StakingPosition<StakeToken>,
@@ -338,6 +353,7 @@ module sui_staking::pool {
 
         // Validations
         position::assert_pool_match(&position, pool_id);
+        position::assert_not_locked(&position, current_time);
 
         // Update pool rewards
         update_pool_rewards(pool, current_time);
@@ -405,6 +421,7 @@ module sui_staking::pool {
     }
 
     /// Partial unstake from a position
+    /// Note: Cannot unstake if position is locked
     public fun unstake_partial<StakeToken, RewardToken>(
         pool: &mut StakingPool<StakeToken, RewardToken>,
         position: &mut StakingPosition<StakeToken>,
@@ -417,6 +434,7 @@ module sui_staking::pool {
 
         // Validations
         position::assert_pool_match(position, pool_id);
+        position::assert_not_locked(position, current_time);
         assert!(amount > 0, errors::zero_amount());
         assert!(amount <= position::staked_amount(position), errors::zero_amount());
 
@@ -519,6 +537,74 @@ module sui_staking::pool {
         );
 
         coin::from_balance(reward_balance, ctx)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // LOCK MANAGEMENT
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Extend lock tier for a position (cannot reduce lock)
+    /// This also claims pending rewards
+    public fun extend_lock<StakeToken, RewardToken>(
+        pool: &mut StakingPool<StakeToken, RewardToken>,
+        position: &mut StakingPosition<StakeToken>,
+        new_tier: u8,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): Coin<RewardToken> {
+        let current_time = sui::clock::timestamp_ms(clock);
+        let pool_id = object::uid_to_inner(&pool.id);
+
+        // Validations
+        position::assert_pool_match(position, pool_id);
+
+        // Update pool rewards
+        update_pool_rewards(pool, current_time);
+
+        // Claim pending rewards first
+        let pending = position::calculate_pending_rewards(position, pool.acc_reward_per_share);
+        let reward_coin = if (pending > 0 && balance::value(&pool.reward_balance) >= pending) {
+            let reward_balance = balance::split(&mut pool.reward_balance, pending);
+            pool.total_rewards_distributed = pool.total_rewards_distributed + pending;
+
+            events::emit_rewards_claimed(
+                pool_id,
+                position::id(position),
+                tx_context::sender(ctx),
+                pending,
+            );
+
+            coin::from_balance(reward_balance, ctx)
+        } else {
+            coin::zero(ctx)
+        };
+
+        // Extend lock and update reward debt
+        let old_tier = position::lock_tier(position);
+        let new_lock_until = position::extend_lock(position, new_tier, current_time);
+        position::update_reward_debt(position, pool.acc_reward_per_share, current_time);
+
+        events::emit_lock_extended(
+            pool_id,
+            position::id(position),
+            tx_context::sender(ctx),
+            old_tier,
+            new_tier,
+            new_lock_until,
+        );
+
+        reward_coin
+    }
+
+    /// Get the total boosted stake in the pool (for voting power calculations)
+    /// This iterates through all positions - use for view/off-chain only
+    public fun total_boosted_stake<StakeToken, RewardToken>(
+        _pool: &StakingPool<StakeToken, RewardToken>,
+    ): u64 {
+        // Note: In practice, we track total_staked for rewards distribution
+        // Boosted amounts are calculated per-position for voting power
+        // This would require on-chain tracking of boosted totals if needed
+        0 // Placeholder - actual implementation would track this
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -817,4 +903,97 @@ module sui_staking::pool {
     }
 
     public fun min_stake_amount(): u64 { MIN_STAKE_AMOUNT }
+
+    /// Get early unstake fee for the pool
+    public fun early_unstake_fee_bps<StakeToken, RewardToken>(pool: &StakingPool<StakeToken, RewardToken>): u64 {
+        pool.config.early_unstake_fee_bps
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // EMERGENCY FUNCTIONS (Package-Level Access)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Emergency unstake internal - bypasses pause and lock checks
+    /// Only callable by emergency module during emergency mode
+    public(package) fun emergency_unstake_internal<StakeToken, RewardToken>(
+        pool: &mut StakingPool<StakeToken, RewardToken>,
+        position: &mut StakingPosition<StakeToken>,
+        net_amount: u64,
+        fee_amount: u64,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): (Coin<StakeToken>, Coin<RewardToken>) {
+        // Update pool rewards
+        update_pool_rewards(pool, clock.timestamp_ms());
+
+        let staked_amount = position::staked_amount(position);
+        let total_amount = net_amount + fee_amount;
+        assert!(total_amount <= staked_amount, errors::zero_amount());
+
+        // Calculate rewards earned
+        let pending = position::calculate_pending_rewards(position, pool.acc_reward_per_share);
+
+        // Extract stake tokens
+        let stake_coin = coin::from_balance(
+            balance::split(&mut pool.stake_balance, net_amount),
+            ctx
+        );
+
+        // Move fee to collected fees
+        if (fee_amount > 0) {
+            let fee_balance = balance::split(&mut pool.stake_balance, fee_amount);
+            balance::join(&mut pool.collected_fees, fee_balance);
+        };
+
+        // Extract rewards
+        let reward_amount = if (pending > 0 && balance::value(&pool.reward_balance) >= pending) {
+            pending
+        } else {
+            0
+        };
+        let reward_coin = if (reward_amount > 0) {
+            coin::from_balance(
+                balance::split(&mut pool.reward_balance, reward_amount),
+                ctx
+            )
+        } else {
+            coin::zero<RewardToken>(ctx)
+        };
+
+        // Update pool state
+        pool.total_staked = pool.total_staked - staked_amount;
+        if (reward_amount > 0) {
+            pool.total_rewards_distributed = pool.total_rewards_distributed + reward_amount;
+        };
+
+        // Clear position
+        position::set_staked_amount(position, 0);
+        position::set_reward_debt(position, 0);
+
+        (stake_coin, reward_coin)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // TEST HELPERS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test_only]
+    public fun destroy_for_testing<ST, RT>(pool: StakingPool<ST, RT>) {
+        let StakingPool {
+            id,
+            config: _,
+            total_staked: _,
+            stake_balance,
+            reward_balance,
+            acc_reward_per_share: _,
+            last_reward_time_ms: _,
+            reward_rate: _,
+            total_rewards_distributed: _,
+            collected_fees,
+        } = pool;
+        object::delete(id);
+        balance::destroy_for_testing(stake_balance);
+        balance::destroy_for_testing(reward_balance);
+        balance::destroy_for_testing(collected_fees);
+    }
 }

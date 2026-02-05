@@ -11,6 +11,7 @@ module sui_launchpad::launchpad {
     use sui_launchpad::registry::{Self, Registry};
     use sui_launchpad::graduation::{Self, GraduationReceipt};
     use sui_launchpad::operators::{Self, OperatorRegistry};
+    use sui_launchpad::creator_config::CreatorTokenConfig;
     // Vesting integration pending - see docs/VESTING.md
     // use sui_vesting::vesting::{Self, VestingSchedule};
 
@@ -64,6 +65,39 @@ module sui_launchpad::launchpad {
             treasury_cap,
             metadata,
             creator_fee_bps,
+            payment,
+            clock,
+            ctx,
+        );
+
+        // Register in registry
+        registry::register_pool(registry, &pool, ctx);
+
+        // Share pool
+        transfer::public_share_object(pool);
+    }
+
+    /// Create a new token pool with custom creator configuration
+    /// Allows creators to customize staking, DAO, and airdrop settings
+    #[allow(lint(share_owned))]
+    public fun create_token_with_config<T>(
+        config: &LaunchpadConfig,
+        registry: &mut Registry,
+        treasury_cap: TreasuryCap<T>,
+        metadata: &CoinMetadata<T>,
+        creator_fee_bps: u64,
+        creator_token_config: CreatorTokenConfig,
+        payment: Coin<SUI>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ) {
+        // Create pool with creator config
+        let pool = bonding_curve::create_pool_with_config<T>(
+            config,
+            treasury_cap,
+            metadata,
+            creator_fee_bps,
+            creator_token_config,
             payment,
             clock,
             ctx,

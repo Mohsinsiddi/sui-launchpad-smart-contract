@@ -204,6 +204,25 @@ module sui_staking::math {
     public fun max_unstake_fee_bps(): u64 { MAX_UNSTAKE_FEE_BPS }
 
     // ═══════════════════════════════════════════════════════════════════════
+    // UTILITY FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Calculate basis points (shorthand for calculate_fee_bps)
+    public fun bps(amount: u64, bps: u64): u64 {
+        calculate_fee_bps(amount, bps)
+    }
+
+    /// Return the minimum of two u64 values
+    public fun min_u64(a: u64, b: u64): u64 {
+        if (a < b) { a } else { b }
+    }
+
+    /// Return the maximum of two u64 values
+    public fun max_u64(a: u64, b: u64): u64 {
+        if (a > b) { a } else { b }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // TESTS
     // ═══════════════════════════════════════════════════════════════════════
 

@@ -31,6 +31,7 @@ module sui_launchpad::graduation {
     use sui_launchpad::registry::{Self, Registry};
     use sui_launchpad::math;
     use sui_launchpad::events;
+    use sui_launchpad::creator_config::{Self, CreatorTokenConfig};
 
     // ═══════════════════════════════════════════════════════════════════════
     // ERRORS
@@ -48,6 +49,9 @@ module sui_launchpad::graduation {
     const ESuiNotExtracted: u64 = 409;
     const ETokensNotExtracted: u64 = 410;
     const EInsufficientLPForDistribution: u64 = 411;
+    const EAirdropTokensNotExtracted: u64 = 412;
+    const EAirdropTokensAlreadyExtracted: u64 = 413;
+    const EAirdropNotEnabled: u64 = 414;
 
     /// Minimum LP tokens required for proper distribution (prevents rounding issues)
     const MIN_LP_FOR_DISTRIBUTION: u64 = 1000;
@@ -159,6 +163,9 @@ module sui_launchpad::graduation {
         staking_config: StakingConfig,
         // DAO integration
         dao_config: DAOConfig,
+        // Airdrop integration
+        airdrop_balance: Balance<T>,
+        airdrop_merkle_root: Option<vector<u8>>,
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -213,15 +220,86 @@ module sui_launchpad::graduation {
         let creator_tokens = math::bps(total_tokens, config::creator_graduation_bps(config));
         let platform_tokens = math::bps(total_tokens, config::platform_graduation_bps(config));
 
-        // Calculate staking allocation (if enabled)
-        let staking_enabled = config::staking_enabled(config);
+        // ═══════════════════════════════════════════════════════════════════
+        // PHASE 1: Read all config values (borrowing pool immutably)
+        // ═══════════════════════════════════════════════════════════════════
+        // We must extract all values we need from creator_token_config BEFORE
+        // mutating the pool, due to Move's borrow checker rules.
+
+        // First, extract creator address while we can borrow immutably
+        let creator = bonding_curve::creator(pool);
+
+        // Extract all values from creator config into local variables
+        let (
+            staking_enabled,
+            staking_reward_bps,
+            airdrop_enabled,
+            airdrop_bps,
+            airdrop_merkle_root,
+            staking_config,
+            dao_config
+        ) = {
+            let creator_token_config = bonding_curve::creator_config(pool);
+
+            let staking_enabled = if (option::is_some(creator_token_config)) {
+                let cc = option::borrow(creator_token_config);
+                creator_config::get_staking_enabled(cc, config)
+            } else {
+                config::staking_enabled(config)
+            };
+
+            let staking_reward_bps = if (option::is_some(creator_token_config)) {
+                let cc = option::borrow(creator_token_config);
+                creator_config::get_staking_reward_bps(cc, config)
+            } else {
+                config::staking_reward_bps(config)
+            };
+
+            let (airdrop_enabled, airdrop_bps) = if (option::is_some(creator_token_config)) {
+                let cc = option::borrow(creator_token_config);
+                (creator_config::airdrop_enabled(cc), creator_config::airdrop_bps(cc))
+            } else {
+                (false, 0)
+            };
+
+            // Get airdrop merkle root if configured
+            let airdrop_merkle_root = if (option::is_some(creator_token_config) && airdrop_enabled) {
+                let cc = option::borrow(creator_token_config);
+                let root_opt = creator_config::airdrop_merkle_root(cc);
+                if (option::is_some(root_opt)) {
+                    option::some(*option::borrow(root_opt))
+                } else {
+                    option::none()
+                }
+            } else {
+                option::none()
+            };
+
+            // Build configs
+            let staking_config = build_staking_config(creator_token_config, config, staking_enabled);
+            let dao_config = build_dao_config(creator_token_config, config);
+
+            (staking_enabled, staking_reward_bps, airdrop_enabled, airdrop_bps, airdrop_merkle_root, staking_config, dao_config)
+        }; // creator_token_config borrow is released here
+
+        // Calculate staking and airdrop tokens
         let staking_tokens = if (staking_enabled) {
-            math::bps(total_tokens, config::staking_reward_bps(config))
+            math::bps(total_tokens, staking_reward_bps)
         } else {
             0
         };
 
-        let _tokens_for_liquidity = total_tokens - creator_tokens - platform_tokens - staking_tokens;
+        let airdrop_tokens = if (airdrop_enabled) {
+            math::bps(total_tokens, airdrop_bps)
+        } else {
+            0
+        };
+
+        let _tokens_for_liquidity = total_tokens - creator_tokens - platform_tokens - staking_tokens - airdrop_tokens;
+
+        // ═══════════════════════════════════════════════════════════════════
+        // PHASE 2: Mutate pool and extract tokens
+        // ═══════════════════════════════════════════════════════════════════
 
         // Mark pool as graduated
         bonding_curve::set_graduated(pool);
@@ -242,7 +320,6 @@ module sui_launchpad::graduation {
         );
 
         // Split and send creator tokens (if any)
-        let creator = bonding_curve::creator(pool);
         if (creator_tokens > 0) {
             let creator_balance = balance::split(&mut token_balance, creator_tokens);
             transfer::public_transfer(
@@ -267,28 +344,11 @@ module sui_launchpad::graduation {
             balance::zero<T>()
         };
 
-        // Build staking config from LaunchpadConfig
-        let staking_config = StakingConfig {
-            enabled: staking_enabled,
-            duration_ms: config::staking_duration_ms(config),
-            min_stake_duration_ms: config::staking_min_duration_ms(config),
-            early_unstake_fee_bps: config::staking_early_fee_bps(config),
-            stake_fee_bps: config::staking_stake_fee_bps(config),
-            unstake_fee_bps: config::staking_unstake_fee_bps(config),
-            admin_destination: config::staking_admin_destination(config),
-            reward_type: config::staking_reward_type(config),
-        };
-
-        // Build DAO config from LaunchpadConfig
-        let dao_config = DAOConfig {
-            enabled: config::dao_enabled(config),
-            quorum_bps: config::dao_quorum_bps(config),
-            voting_delay_ms: config::dao_voting_delay_ms(config),
-            voting_period_ms: config::dao_voting_period_ms(config),
-            timelock_delay_ms: config::dao_timelock_delay_ms(config),
-            proposal_threshold_bps: config::dao_proposal_threshold_bps(config),
-            council_enabled: config::dao_council_enabled(config),
-            admin_destination: config::dao_admin_destination(config),
+        // Split airdrop tokens (kept in PendingGraduation for later extraction)
+        let airdrop_balance = if (airdrop_tokens > 0) {
+            balance::split(&mut token_balance, airdrop_tokens)
+        } else {
+            balance::zero<T>()
         };
 
         // Build LP distribution config for DEX adapter
@@ -324,6 +384,75 @@ module sui_launchpad::graduation {
             staking_balance,
             staking_config,
             dao_config,
+            airdrop_balance,
+            airdrop_merkle_root,
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // CONFIG BUILDERS (use per-token config if available, else platform defaults)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Build StakingConfig from per-token config or platform defaults
+    fun build_staking_config(
+        creator_token_config: &Option<CreatorTokenConfig>,
+        platform_config: &LaunchpadConfig,
+        staking_enabled: bool,
+    ): StakingConfig {
+        if (option::is_some(creator_token_config)) {
+            let cc = option::borrow(creator_token_config);
+            StakingConfig {
+                enabled: creator_config::get_staking_enabled(cc, platform_config) && staking_enabled,
+                duration_ms: creator_config::get_staking_duration_ms(cc, platform_config),
+                min_stake_duration_ms: creator_config::get_staking_min_duration_ms(cc, platform_config),
+                early_unstake_fee_bps: creator_config::get_staking_early_fee_bps(cc, platform_config),
+                stake_fee_bps: creator_config::get_staking_stake_fee_bps(cc, platform_config),
+                unstake_fee_bps: creator_config::get_staking_unstake_fee_bps(cc, platform_config),
+                admin_destination: config::staking_admin_destination(platform_config),
+                reward_type: config::staking_reward_type(platform_config),
+            }
+        } else {
+            StakingConfig {
+                enabled: staking_enabled,
+                duration_ms: config::staking_duration_ms(platform_config),
+                min_stake_duration_ms: config::staking_min_duration_ms(platform_config),
+                early_unstake_fee_bps: config::staking_early_fee_bps(platform_config),
+                stake_fee_bps: config::staking_stake_fee_bps(platform_config),
+                unstake_fee_bps: config::staking_unstake_fee_bps(platform_config),
+                admin_destination: config::staking_admin_destination(platform_config),
+                reward_type: config::staking_reward_type(platform_config),
+            }
+        }
+    }
+
+    /// Build DAOConfig from per-token config or platform defaults
+    fun build_dao_config(
+        creator_token_config: &Option<CreatorTokenConfig>,
+        platform_config: &LaunchpadConfig,
+    ): DAOConfig {
+        if (option::is_some(creator_token_config)) {
+            let cc = option::borrow(creator_token_config);
+            DAOConfig {
+                enabled: creator_config::get_dao_enabled(cc, platform_config),
+                quorum_bps: creator_config::get_dao_quorum_bps(cc, platform_config),
+                voting_delay_ms: creator_config::get_dao_voting_delay_ms(cc, platform_config),
+                voting_period_ms: creator_config::get_dao_voting_period_ms(cc, platform_config),
+                timelock_delay_ms: creator_config::get_dao_timelock_delay_ms(cc, platform_config),
+                proposal_threshold_bps: creator_config::get_dao_proposal_threshold_bps(cc, platform_config),
+                council_enabled: creator_config::get_dao_council_enabled(cc, platform_config),
+                admin_destination: config::dao_admin_destination(platform_config),
+            }
+        } else {
+            DAOConfig {
+                enabled: config::dao_enabled(platform_config),
+                quorum_bps: config::dao_quorum_bps(platform_config),
+                voting_delay_ms: config::dao_voting_delay_ms(platform_config),
+                voting_period_ms: config::dao_voting_period_ms(platform_config),
+                timelock_delay_ms: config::dao_timelock_delay_ms(platform_config),
+                proposal_threshold_bps: config::dao_proposal_threshold_bps(platform_config),
+                council_enabled: config::dao_council_enabled(platform_config),
+                admin_destination: config::dao_admin_destination(platform_config),
+            }
         }
     }
 
@@ -364,11 +493,14 @@ module sui_launchpad::graduation {
             staking_balance,
             staking_config: _,
             dao_config: _,
+            airdrop_balance,
+            airdrop_merkle_root: _,
         } = pending;
 
         let sui_remaining = balance::value(&sui_balance);
         let token_remaining = balance::value(&token_balance);
         let staking_remaining = balance::value(&staking_balance);
+        let airdrop_remaining = balance::value(&airdrop_balance);
         let timestamp = clock.timestamp_ms();
 
         // STRICT VALIDATION: All balances MUST be zero
@@ -378,11 +510,14 @@ module sui_launchpad::graduation {
         assert!(token_remaining == 0, ETokensNotExtracted);
         // Staking tokens must be extracted if staking was enabled
         assert!(staking_remaining == 0, EStakingTokensNotExtracted);
+        // Airdrop tokens must be extracted if airdrop was enabled
+        assert!(airdrop_remaining == 0, EAirdropTokensNotExtracted);
 
         // Destroy empty balances
         balance::destroy_zero(sui_balance);
         balance::destroy_zero(token_balance);
         balance::destroy_zero(staking_balance);
+        balance::destroy_zero(airdrop_balance);
 
         // Record graduation in registry
         registry::record_graduation(registry, pool_id, dex_type, dex_pool_id);
@@ -445,6 +580,8 @@ module sui_launchpad::graduation {
             staking_balance,
             staking_config: _,
             dao_config: _,
+            airdrop_balance,
+            airdrop_merkle_root: _,
         } = pending;
 
         let timestamp = clock.timestamp_ms();
@@ -453,6 +590,11 @@ module sui_launchpad::graduation {
         let staking_amount = balance::value(&staking_balance);
         assert!(staking_amount == 0, EStakingTokensNotExtracted);
         balance::destroy_zero(staking_balance);
+
+        // STRICT VALIDATION: Airdrop tokens MUST be extracted (no remainder allowed)
+        let airdrop_amount = balance::value(&airdrop_balance);
+        assert!(airdrop_amount == 0, EAirdropTokensNotExtracted);
+        balance::destroy_zero(airdrop_balance);
 
         // Handle remaining SUI (send to sender)
         let sui_remaining = balance::value(&sui_balance);
@@ -649,6 +791,36 @@ module sui_launchpad::graduation {
     public fun dao_config_admin_destination(c: &DAOConfig): u8 { c.admin_destination }
 
     // ═══════════════════════════════════════════════════════════════════════
+    // AIRDROP INTEGRATION ACCESSORS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Get airdrop token amount available
+    public fun pending_airdrop_amount<T>(pending: &PendingGraduation<T>): u64 {
+        balance::value(&pending.airdrop_balance)
+    }
+
+    /// Check if airdrop is enabled for this graduation
+    public fun pending_airdrop_enabled<T>(pending: &PendingGraduation<T>): bool {
+        balance::value(&pending.airdrop_balance) > 0
+    }
+
+    /// Get airdrop merkle root (for merkle tree based claims)
+    public fun pending_airdrop_merkle_root<T>(pending: &PendingGraduation<T>): &Option<vector<u8>> {
+        &pending.airdrop_merkle_root
+    }
+
+    /// Extract airdrop tokens for airdrop contract creation
+    /// Called by PTB to get tokens for the airdrop
+    public fun extract_airdrop_tokens<T>(
+        pending: &mut PendingGraduation<T>,
+        ctx: &mut TxContext
+    ): Coin<T> {
+        let amount = balance::value(&pending.airdrop_balance);
+        assert!(amount > 0, EAirdropTokensAlreadyExtracted);
+        coin::from_balance(balance::split(&mut pending.airdrop_balance, amount), ctx)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // LP/POSITION SPLITTING (PTB calls this, then handles vesting separately)
     // Distribution: Creator (vested) + Protocol (direct) + DAO (remainder)
     // ═══════════════════════════════════════════════════════════════════════
@@ -801,11 +973,14 @@ module sui_launchpad::graduation {
             staking_balance,
             staking_config: _,
             dao_config: _,
+            airdrop_balance,
+            airdrop_merkle_root: _,
         } = pending;
 
         balance::destroy_for_testing(sui_balance);
         balance::destroy_for_testing(token_balance);
         balance::destroy_for_testing(staking_balance);
+        balance::destroy_for_testing(airdrop_balance);
     }
 
     #[test_only]

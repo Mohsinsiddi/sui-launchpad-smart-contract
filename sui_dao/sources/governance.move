@@ -15,8 +15,11 @@ module sui_dao::governance {
     // ═══════════════════════════════════════════════════════════════════════
 
     /// Voting modes
-    const VOTING_MODE_STAKING: u8 = 0;
-    const VOTING_MODE_NFT: u8 = 1;
+    const VOTING_MODE_STAKING: u8 = 0;  // Voting power from staking positions
+    const VOTING_MODE_NFT: u8 = 1;       // Voting power from NFT holdings
+    const VOTING_MODE_BALANCE: u8 = 2;   // Voting power from token balance (snapshot)
+    const VOTING_MODE_LP: u8 = 3;        // Voting power from LP token holdings
+    const VOTING_MODE_HYBRID: u8 = 4;    // Combined: staking + balance + LP
 
     /// Default voting parameters
     const DEFAULT_QUORUM_BPS: u64 = 400;           // 4%
@@ -67,12 +70,19 @@ module sui_dao::governance {
         description_hash: String,
         /// Governance configuration
         config: GovernanceConfig,
-        /// Voting mode (STAKING or NFT)
+        /// Voting mode (STAKING, NFT, BALANCE, LP, or HYBRID)
         voting_mode: u8,
-        /// Associated staking pool ID (for STAKING mode)
+        /// Associated staking pool ID (for STAKING and HYBRID modes)
         staking_pool_id: Option<ID>,
         /// NFT collection type name (for NFT mode)
         nft_collection_type: Option<std::ascii::String>,
+        /// Token type for balance-based voting (for BALANCE and HYBRID modes)
+        voting_token_type: Option<std::ascii::String>,
+        /// LP pool ID (for LP and HYBRID modes)
+        lp_pool_id: Option<ID>,
+        /// Hybrid mode weights (in bps, must sum to 10000)
+        /// [staking_weight, balance_weight, lp_weight]
+        hybrid_weights_bps: vector<u64>,
         /// Is governance paused
         paused: bool,
         /// Council enabled flag
@@ -129,6 +139,9 @@ module sui_dao::governance {
             voting_mode: VOTING_MODE_STAKING,
             staking_pool_id: option::some(staking_pool_id),
             nft_collection_type: option::none(),
+            voting_token_type: option::none(),
+            lp_pool_id: option::none(),
+            hybrid_weights_bps: vector::empty(),
             paused: false,
             council_enabled: false,
             council_members: vec_set::empty(),
@@ -205,6 +218,9 @@ module sui_dao::governance {
             voting_mode: VOTING_MODE_STAKING,
             staking_pool_id: option::some(staking_pool_id),
             nft_collection_type: option::none(),
+            voting_token_type: option::none(),
+            lp_pool_id: option::none(),
+            hybrid_weights_bps: vector::empty(),
             paused: false,
             council_enabled: false,
             council_members: vec_set::empty(),
@@ -275,6 +291,9 @@ module sui_dao::governance {
             voting_mode: VOTING_MODE_NFT,
             staking_pool_id: option::none(),
             nft_collection_type: option::some(nft_type_string),
+            voting_token_type: option::none(),
+            lp_pool_id: option::none(),
+            hybrid_weights_bps: vector::empty(),
             paused: false,
             council_enabled: false,
             council_members: vec_set::empty(),
@@ -297,6 +316,239 @@ module sui_dao::governance {
             governance.name,
             *governance.nft_collection_type.borrow(),
             quorum_votes,
+            config.voting_delay_ms,
+            config.voting_period_ms,
+            config.timelock_delay_ms,
+            config.proposal_threshold,
+            events::origin_independent(),
+            option::none(),
+            clock.timestamp_ms(),
+        );
+
+        (governance, admin_cap)
+    }
+
+    /// Create balance-based governance (voting power = token balance)
+    /// Uses token balance snapshot at proposal creation time
+    public fun create_balance_governance<Token>(
+        registry: &mut DAORegistry,
+        name: String,
+        description_hash: String,
+        quorum_bps: u64,
+        proposal_threshold: u64,
+        payment: Coin<SUI>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): (Governance, DAOAdminCap) {
+        registry::assert_not_paused(registry);
+        registry::collect_dao_creation_fee(registry, payment, false);
+
+        let token_type_string = std::type_name::with_original_ids<Token>().into_string();
+
+        let config = GovernanceConfig {
+            quorum_bps,
+            quorum_votes: 0,
+            voting_delay_ms: DEFAULT_VOTING_DELAY_MS,
+            voting_period_ms: DEFAULT_VOTING_PERIOD_MS,
+            timelock_delay_ms: DEFAULT_TIMELOCK_DELAY_MS,
+            fast_track_timelock_ms: MIN_TIMELOCK_MS,
+            proposal_threshold,
+            approval_threshold_bps: 5000, // 50%
+        };
+
+        let governance = Governance {
+            id: object::new(ctx),
+            name,
+            description_hash,
+            config,
+            voting_mode: VOTING_MODE_BALANCE,
+            staking_pool_id: option::none(),
+            nft_collection_type: option::none(),
+            voting_token_type: option::some(token_type_string),
+            lp_pool_id: option::none(),
+            hybrid_weights_bps: vector::empty(),
+            paused: false,
+            council_enabled: false,
+            council_members: vec_set::empty(),
+            delegation_enabled: false,
+            treasury_id: option::none(),
+            guardian: option::none(),
+            proposal_count: 0,
+            created_at_ms: clock.timestamp_ms(),
+            creator: ctx.sender(),
+        };
+
+        let governance_id = object::id(&governance);
+        registry::register_governance(registry, governance_id);
+
+        let admin_cap = access::create_dao_admin_cap(governance_id, ctx);
+
+        events::emit_governance_created(
+            governance_id,
+            ctx.sender(),
+            governance.name,
+            VOTING_MODE_BALANCE,
+            option::none(),
+            config.quorum_bps,
+            config.voting_delay_ms,
+            config.voting_period_ms,
+            config.timelock_delay_ms,
+            config.proposal_threshold,
+            events::origin_independent(),
+            option::none(),
+            clock.timestamp_ms(),
+        );
+
+        (governance, admin_cap)
+    }
+
+    /// Create LP-based governance (voting power = LP token holdings)
+    public fun create_lp_governance<LP>(
+        registry: &mut DAORegistry,
+        name: String,
+        description_hash: String,
+        lp_pool_id: ID,
+        quorum_bps: u64,
+        proposal_threshold: u64,
+        payment: Coin<SUI>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): (Governance, DAOAdminCap) {
+        registry::assert_not_paused(registry);
+        registry::collect_dao_creation_fee(registry, payment, false);
+
+        let config = GovernanceConfig {
+            quorum_bps,
+            quorum_votes: 0,
+            voting_delay_ms: DEFAULT_VOTING_DELAY_MS,
+            voting_period_ms: DEFAULT_VOTING_PERIOD_MS,
+            timelock_delay_ms: DEFAULT_TIMELOCK_DELAY_MS,
+            fast_track_timelock_ms: MIN_TIMELOCK_MS,
+            proposal_threshold,
+            approval_threshold_bps: 5000, // 50%
+        };
+
+        let governance = Governance {
+            id: object::new(ctx),
+            name,
+            description_hash,
+            config,
+            voting_mode: VOTING_MODE_LP,
+            staking_pool_id: option::none(),
+            nft_collection_type: option::none(),
+            voting_token_type: option::none(),
+            lp_pool_id: option::some(lp_pool_id),
+            hybrid_weights_bps: vector::empty(),
+            paused: false,
+            council_enabled: false,
+            council_members: vec_set::empty(),
+            delegation_enabled: false,
+            treasury_id: option::none(),
+            guardian: option::none(),
+            proposal_count: 0,
+            created_at_ms: clock.timestamp_ms(),
+            creator: ctx.sender(),
+        };
+
+        let governance_id = object::id(&governance);
+        registry::register_governance(registry, governance_id);
+
+        let admin_cap = access::create_dao_admin_cap(governance_id, ctx);
+
+        events::emit_governance_created(
+            governance_id,
+            ctx.sender(),
+            governance.name,
+            VOTING_MODE_LP,
+            option::none(),
+            config.quorum_bps,
+            config.voting_delay_ms,
+            config.voting_period_ms,
+            config.timelock_delay_ms,
+            config.proposal_threshold,
+            events::origin_independent(),
+            option::none(),
+            clock.timestamp_ms(),
+        );
+
+        (governance, admin_cap)
+    }
+
+    /// Create hybrid governance (voting power = staking + balance + LP combined)
+    /// Weights are in basis points and must sum to 10000 (100%)
+    public fun create_hybrid_governance<Token>(
+        registry: &mut DAORegistry,
+        name: String,
+        description_hash: String,
+        staking_pool_id: ID,
+        lp_pool_id: Option<ID>,
+        staking_weight_bps: u64,
+        balance_weight_bps: u64,
+        lp_weight_bps: u64,
+        quorum_bps: u64,
+        proposal_threshold: u64,
+        payment: Coin<SUI>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): (Governance, DAOAdminCap) {
+        registry::assert_not_paused(registry);
+        registry::collect_dao_creation_fee(registry, payment, false);
+
+        // Validate weights sum to 100%
+        assert!(staking_weight_bps + balance_weight_bps + lp_weight_bps == 10000, errors::invalid_config());
+
+        let token_type_string = std::type_name::with_original_ids<Token>().into_string();
+
+        let config = GovernanceConfig {
+            quorum_bps,
+            quorum_votes: 0,
+            voting_delay_ms: DEFAULT_VOTING_DELAY_MS,
+            voting_period_ms: DEFAULT_VOTING_PERIOD_MS,
+            timelock_delay_ms: DEFAULT_TIMELOCK_DELAY_MS,
+            fast_track_timelock_ms: MIN_TIMELOCK_MS,
+            proposal_threshold,
+            approval_threshold_bps: 5000, // 50%
+        };
+
+        let mut weights = vector::empty<u64>();
+        weights.push_back(staking_weight_bps);
+        weights.push_back(balance_weight_bps);
+        weights.push_back(lp_weight_bps);
+
+        let governance = Governance {
+            id: object::new(ctx),
+            name,
+            description_hash,
+            config,
+            voting_mode: VOTING_MODE_HYBRID,
+            staking_pool_id: option::some(staking_pool_id),
+            nft_collection_type: option::none(),
+            voting_token_type: option::some(token_type_string),
+            lp_pool_id,
+            hybrid_weights_bps: weights,
+            paused: false,
+            council_enabled: false,
+            council_members: vec_set::empty(),
+            delegation_enabled: false,
+            treasury_id: option::none(),
+            guardian: option::none(),
+            proposal_count: 0,
+            created_at_ms: clock.timestamp_ms(),
+            creator: ctx.sender(),
+        };
+
+        let governance_id = object::id(&governance);
+        registry::register_governance(registry, governance_id);
+
+        let admin_cap = access::create_dao_admin_cap(governance_id, ctx);
+
+        events::emit_governance_created(
+            governance_id,
+            ctx.sender(),
+            governance.name,
+            VOTING_MODE_HYBRID,
+            option::some(staking_pool_id),
+            config.quorum_bps,
             config.voting_delay_ms,
             config.voting_period_ms,
             config.timelock_delay_ms,
@@ -525,8 +777,14 @@ module sui_dao::governance {
     public fun voting_mode(governance: &Governance): u8 { governance.voting_mode }
     public fun is_staking_mode(governance: &Governance): bool { governance.voting_mode == VOTING_MODE_STAKING }
     public fun is_nft_mode(governance: &Governance): bool { governance.voting_mode == VOTING_MODE_NFT }
+    public fun is_balance_mode(governance: &Governance): bool { governance.voting_mode == VOTING_MODE_BALANCE }
+    public fun is_lp_mode(governance: &Governance): bool { governance.voting_mode == VOTING_MODE_LP }
+    public fun is_hybrid_mode(governance: &Governance): bool { governance.voting_mode == VOTING_MODE_HYBRID }
     public fun staking_pool_id(governance: &Governance): Option<ID> { governance.staking_pool_id }
     public fun nft_collection_type(governance: &Governance): Option<std::ascii::String> { governance.nft_collection_type }
+    public fun voting_token_type(governance: &Governance): Option<std::ascii::String> { governance.voting_token_type }
+    public fun lp_pool_id(governance: &Governance): Option<ID> { governance.lp_pool_id }
+    public fun hybrid_weights_bps(governance: &Governance): &vector<u64> { &governance.hybrid_weights_bps }
     public fun is_paused(governance: &Governance): bool { governance.paused }
     public fun is_council_enabled(governance: &Governance): bool { governance.council_enabled }
     public fun is_delegation_enabled(governance: &Governance): bool { governance.delegation_enabled }
@@ -581,6 +839,9 @@ module sui_dao::governance {
 
     public fun voting_mode_staking(): u8 { VOTING_MODE_STAKING }
     public fun voting_mode_nft(): u8 { VOTING_MODE_NFT }
+    public fun voting_mode_balance(): u8 { VOTING_MODE_BALANCE }
+    public fun voting_mode_lp(): u8 { VOTING_MODE_LP }
+    public fun voting_mode_hybrid(): u8 { VOTING_MODE_HYBRID }
     public fun default_quorum_bps(): u64 { DEFAULT_QUORUM_BPS }
     public fun default_voting_delay_ms(): u64 { DEFAULT_VOTING_DELAY_MS }
     public fun default_voting_period_ms(): u64 { DEFAULT_VOTING_PERIOD_MS }
@@ -620,6 +881,9 @@ module sui_dao::governance {
             voting_mode: VOTING_MODE_STAKING,
             staking_pool_id: option::some(staking_pool_id),
             nft_collection_type: option::none(),
+            voting_token_type: option::none(),
+            lp_pool_id: option::none(),
+            hybrid_weights_bps: vector::empty(),
             paused: false,
             council_enabled: false,
             council_members: vec_set::empty(),
@@ -660,6 +924,9 @@ module sui_dao::governance {
             voting_mode: VOTING_MODE_NFT,
             staking_pool_id: option::none(),
             nft_collection_type: option::some(nft_type_string),
+            voting_token_type: option::none(),
+            lp_pool_id: option::none(),
+            hybrid_weights_bps: vector::empty(),
             paused: false,
             council_enabled: false,
             council_members: vec_set::empty(),
@@ -682,6 +949,9 @@ module sui_dao::governance {
             voting_mode: _,
             staking_pool_id: _,
             nft_collection_type: _,
+            voting_token_type: _,
+            lp_pool_id: _,
+            hybrid_weights_bps: _,
             paused: _,
             council_enabled: _,
             council_members: _,

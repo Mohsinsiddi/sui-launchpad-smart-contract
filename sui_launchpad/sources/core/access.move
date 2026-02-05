@@ -150,6 +150,23 @@ module sui_launchpad::access {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
+    // TEST HELPERS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test_only]
+    public fun create_admin_cap_for_testing(ctx: &mut TxContext): AdminCap {
+        AdminCap {
+            id: object::new(ctx),
+        }
+    }
+
+    #[test_only]
+    public fun destroy_admin_cap_for_testing(cap: AdminCap) {
+        let AdminCap { id } = cap;
+        object::delete(id);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // TESTS
     // ═══════════════════════════════════════════════════════════════════════
 

@@ -19,6 +19,7 @@ module sui_launchpad::bonding_curve {
     use sui_launchpad::config::{Self, LaunchpadConfig};
     use sui_launchpad::access::AdminCap;
     use sui_launchpad::events;
+    use sui_launchpad::creator_config::{Self, CreatorTokenConfig};
 
     // ═══════════════════════════════════════════════════════════════════════
     // ERRORS
@@ -98,6 +99,10 @@ module sui_launchpad::bonding_curve {
         trade_count: u64,
         /// Creation timestamp
         created_at: u64,
+
+        // ─── Creator Configuration ──────────────────────────────────────────
+        /// Per-token config set by creator (for staking, DAO, airdrop customization)
+        creator_config: Option<CreatorTokenConfig>,
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -217,6 +222,129 @@ module sui_launchpad::bonding_curve {
             total_volume: 0,
             trade_count: 0,
             created_at: timestamp,
+            creator_config: option::none(), // No per-token config (use platform defaults)
+        };
+
+        // Emit event
+        events::emit_token_created(
+            object::id(&pool),
+            type_name::with_original_ids<T>(),
+            creator,
+            name,
+            symbol,
+            total_supply,
+            creation_fee,
+            timestamp,
+        );
+
+        pool
+    }
+
+    /// Create a new bonding pool with custom creator configuration
+    /// Allows creator to customize staking, DAO, and airdrop settings
+    ///
+    /// FUND SAFETY: Treasury cap is FROZEN after minting (same as create_pool)
+    #[allow(lint(self_transfer))]
+    public fun create_pool_with_config<T>(
+        config: &LaunchpadConfig,
+        treasury_cap: TreasuryCap<T>,
+        metadata: &CoinMetadata<T>,
+        creator_fee_bps: u64,
+        creator_token_config: CreatorTokenConfig,
+        payment: Coin<SUI>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): BondingPool<T> {
+        // Validate platform not paused
+        config::assert_not_paused(config);
+
+        // Validate no tokens have been minted yet
+        assert!(coin::total_supply(&treasury_cap) == 0, ETokensAlreadyMinted);
+
+        // Validate creator fee is within acceptable range (max 5%)
+        assert!(creator_fee_bps <= MAX_CREATOR_FEE_BPS, ECreatorFeeTooHigh);
+
+        // Validate creation fee
+        let creation_fee = config::creation_fee(config);
+        assert!(coin::value(&payment) >= creation_fee, EInsufficientPayment);
+
+        // Get token info from metadata
+        let name = coin::get_name(metadata);
+        let symbol = coin::get_symbol(metadata);
+
+        // Get curve parameters from config
+        let total_supply = config::default_total_supply(config);
+        let base_price = config::default_base_price(config);
+        let slope = config::default_slope(config);
+
+        // Mint total supply
+        let mut treasury = treasury_cap;
+        let tokens = coin::mint(&mut treasury, total_supply, ctx);
+
+        // Calculate platform allocation (admin-configurable, e.g., 1%)
+        let platform_allocation = math::bps(total_supply, config::platform_allocation_bps(config));
+
+        // Split tokens
+        let mut token_balance = coin::into_balance(tokens);
+
+        // Platform tokens → treasury (protocol holds these)
+        let platform_tokens = balance::split(&mut token_balance, platform_allocation);
+        transfer::public_transfer(
+            coin::from_balance(platform_tokens, ctx),
+            config::treasury(config)
+        );
+
+        // Handle creation fee payment
+        let payment_value = coin::value(&payment);
+        let mut payment_balance = coin::into_balance(payment);
+
+        // Send creation fee to treasury
+        let fee_balance = balance::split(&mut payment_balance, creation_fee);
+        transfer::public_transfer(
+            coin::from_balance(fee_balance, ctx),
+            config::treasury(config)
+        );
+
+        // Return excess payment to creator (if any)
+        let excess = payment_value - creation_fee;
+        if (excess > 0) {
+            transfer::public_transfer(
+                coin::from_balance(payment_balance, ctx),
+                ctx.sender()
+            );
+        } else {
+            balance::destroy_zero(payment_balance);
+        };
+
+        let creator = ctx.sender();
+        let timestamp = clock.timestamp_ms();
+
+        // Freeze the treasury cap
+        transfer::public_freeze_object(treasury);
+        let treasury_cap_frozen = true;
+
+        // Create the pool with creator config
+        let pool = BondingPool<T> {
+            id: object::new(ctx),
+            token_type: type_name::with_original_ids<T>(),
+            name,
+            symbol,
+            total_supply,
+            sui_balance: balance::zero(),
+            token_balance,
+            base_price,
+            slope,
+            circulating_supply: 0,
+            creator,
+            creator_fee_bps,
+            paused: false,
+            graduated: false,
+            locked: false,
+            treasury_cap_frozen,
+            total_volume: 0,
+            trade_count: 0,
+            created_at: timestamp,
+            creator_config: option::some(creator_token_config), // Store creator's custom config
         };
 
         // Emit event
@@ -490,6 +618,8 @@ module sui_launchpad::bonding_curve {
     public fun total_volume<T>(pool: &BondingPool<T>): u64 { pool.total_volume }
     public fun trade_count<T>(pool: &BondingPool<T>): u64 { pool.trade_count }
     public fun created_at<T>(pool: &BondingPool<T>): u64 { pool.created_at }
+    public fun has_creator_config<T>(pool: &BondingPool<T>): bool { option::is_some(&pool.creator_config) }
+    public fun creator_config<T>(pool: &BondingPool<T>): &Option<CreatorTokenConfig> { &pool.creator_config }
 
     // ═══════════════════════════════════════════════════════════════════════
     // ADMIN FUNCTIONS
@@ -597,5 +727,107 @@ module sui_launchpad::bonding_curve {
 
         market_cap >= config::graduation_threshold(config) &&
         sui_raised >= config::min_graduation_liquidity(config)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // EMERGENCY FUNCTIONS (Package-Level Access)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Rage quit sell - allows selling even when paused
+    /// Only callable by emergency module during emergency mode
+    /// Bypasses pause check but still updates pool state
+    public(package) fun rage_quit_sell<T>(
+        pool: &mut BondingPool<T>,
+        tokens: Coin<T>,
+        net_sui_out: u64,
+        fee: u64,
+        ctx: &mut TxContext,
+    ): Coin<SUI> {
+        // Don't check pause - that's the point of rage quit
+        assert!(!pool.graduated, EPoolGraduated);
+
+        let tokens_in = coin::value(&tokens);
+        assert!(tokens_in > 0, EZeroAmount);
+        assert!(tokens_in <= pool.circulating_supply, EInsufficientTokens);
+
+        let total_sui_out = net_sui_out + fee;
+        assert!(balance::value(&pool.sui_balance) >= total_sui_out, EInsufficientPayment);
+
+        // Update pool state
+        pool.circulating_supply = pool.circulating_supply - tokens_in;
+        pool.total_volume = pool.total_volume + total_sui_out;
+        pool.trade_count = pool.trade_count + 1;
+
+        // Return tokens to pool
+        balance::join(&mut pool.token_balance, coin::into_balance(tokens));
+
+        // Extract SUI
+        let sui_out = balance::split(&mut pool.sui_balance, total_sui_out);
+
+        coin::from_balance(sui_out, ctx)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // TEST HELPERS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test_only]
+    public fun create_pool_for_testing<T>(
+        total_supply: u64,
+        creator_fee_bps: u64,
+        creator: address,
+        ctx: &mut TxContext,
+    ): BondingPool<T> {
+        BondingPool<T> {
+            id: object::new(ctx),
+            token_type: type_name::get<T>(),
+            name: std::string::utf8(b"Test Token"),
+            symbol: std::ascii::string(b"TEST"),
+            total_supply,
+            sui_balance: balance::zero<SUI>(),
+            token_balance: balance::create_for_testing<T>(total_supply),
+            base_price: 100,
+            slope: 1,
+            circulating_supply: 0,
+            creator,
+            creator_fee_bps,
+            paused: false,
+            graduated: false,
+            locked: false,
+            treasury_cap_frozen: false,
+            total_volume: 0,
+            trade_count: 0,
+            created_at: 0,
+            creator_config: option::none(),
+        }
+    }
+
+    #[test_only]
+    public fun destroy_pool_for_testing<T>(pool: BondingPool<T>) {
+        let BondingPool {
+            id,
+            token_type: _,
+            name: _,
+            symbol: _,
+            total_supply: _,
+            sui_balance,
+            token_balance,
+            base_price: _,
+            slope: _,
+            circulating_supply: _,
+            creator: _,
+            creator_fee_bps: _,
+            paused: _,
+            graduated: _,
+            locked: _,
+            treasury_cap_frozen: _,
+            total_volume: _,
+            trade_count: _,
+            created_at: _,
+            creator_config: _,
+        } = pool;
+        object::delete(id);
+        balance::destroy_for_testing(sui_balance);
+        balance::destroy_for_testing(token_balance);
     }
 }

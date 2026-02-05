@@ -123,6 +123,16 @@ module sui_staking::events {
         new_total_staked: u64,
     }
 
+    /// Emitted when a position's lock tier is extended
+    public struct LockExtended has copy, drop {
+        pool_id: ID,
+        position_id: ID,
+        staker: address,
+        old_tier: u8,
+        new_tier: u8,
+        lock_until_ms: u64,
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // PLATFORM EVENTS
     // ═══════════════════════════════════════════════════════════════════════
@@ -284,6 +294,24 @@ module sui_staking::events {
             staker,
             added_amount,
             new_total_staked,
+        });
+    }
+
+    public fun emit_lock_extended(
+        pool_id: ID,
+        position_id: ID,
+        staker: address,
+        old_tier: u8,
+        new_tier: u8,
+        lock_until_ms: u64,
+    ) {
+        event::emit(LockExtended {
+            pool_id,
+            position_id,
+            staker,
+            old_tier,
+            new_tier,
+            lock_until_ms,
         });
     }
 

@@ -34,6 +34,12 @@ module sui_staking::errors {
     const ENothingToClaim: u64 = 202;
     /// Position belongs to different pool
     const EWrongPool: u64 = 203;
+    /// Position is still locked
+    const EPositionLocked: u64 = 204;
+    /// Invalid lock tier
+    const EInvalidLockTier: u64 = 205;
+    /// Cannot extend lock to shorter duration
+    const ECannotReduceLock: u64 = 206;
 
     // ═══════════════════════════════════════════════════════════════════════
     // ACCESS ERRORS (300-399)
@@ -85,6 +91,9 @@ module sui_staking::errors {
     public fun amount_too_small(): u64 { EAmountTooSmall }
     public fun nothing_to_claim(): u64 { ENothingToClaim }
     public fun wrong_pool(): u64 { EWrongPool }
+    public fun position_locked(): u64 { EPositionLocked }
+    public fun invalid_lock_tier(): u64 { EInvalidLockTier }
+    public fun cannot_reduce_lock(): u64 { ECannotReduceLock }
 
     public fun not_owner(): u64 { ENotOwner }
     public fun not_pool_admin(): u64 { ENotPoolAdmin }

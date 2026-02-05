@@ -55,6 +55,17 @@ module sui_staking::access {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
+    // VALIDATION FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Assert pool admin cap matches the expected pool
+    public fun assert_pool_admin_cap_matches(cap: &PoolAdminCap, expected_pool_id: ID) {
+        assert!(cap.pool_id == expected_pool_id, EPoolAdminMismatch);
+    }
+
+    const EPoolAdminMismatch: u64 = 100;
+
+    // ═══════════════════════════════════════════════════════════════════════
     // TESTS
     // ═══════════════════════════════════════════════════════════════════════
 
