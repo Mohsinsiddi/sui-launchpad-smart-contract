@@ -131,6 +131,8 @@ module sui_vesting::vesting {
     ///
     /// # Returns
     /// * `CreatorCap` - Capability for creator to manage the schedule
+    ///
+    /// Note: For launchpad integration, use create_schedule_with_origin() instead
     public fun create_schedule<T>(
         config: &mut VestingConfig,
         tokens: Coin<T>,
@@ -139,6 +141,37 @@ module sui_vesting::vesting {
         cliff_duration: u64,
         vesting_duration: u64,
         revocable: bool,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): CreatorCap {
+        create_schedule_with_origin<T>(
+            config,
+            tokens,
+            beneficiary,
+            start_time,
+            cliff_duration,
+            vesting_duration,
+            revocable,
+            events::origin_independent(),
+            option::none(),
+            clock,
+            ctx,
+        )
+    }
+
+    /// Create a vesting schedule with origin tracking
+    /// origin: 0=independent, 1=launchpad, 2=partner (use events::origin_* constants)
+    /// origin_id: Optional ID linking to source (e.g., launchpad pool ID)
+    public fun create_schedule_with_origin<T>(
+        config: &mut VestingConfig,
+        tokens: Coin<T>,
+        beneficiary: address,
+        start_time: u64,
+        cliff_duration: u64,
+        vesting_duration: u64,
+        revocable: bool,
+        origin: u8,
+        origin_id: Option<ID>,
         clock: &Clock,
         ctx: &mut TxContext,
     ): CreatorCap {
@@ -178,7 +211,7 @@ module sui_vesting::vesting {
         config.total_schedules = config.total_schedules + 1;
         config.total_vested_count = config.total_vested_count + 1;
 
-        // Emit event
+        // Emit event with origin tracking
         events::emit_schedule_created<T>(
             schedule_id,
             creator,
@@ -188,6 +221,8 @@ module sui_vesting::vesting {
             cliff_duration,
             vesting_duration,
             revocable,
+            origin,
+            origin_id,
         );
 
         // Transfer schedule to beneficiary
@@ -464,9 +499,9 @@ module sui_vesting::vesting {
     public fun created_at<T>(schedule: &VestingSchedule<T>): u64 { schedule.created_at }
 
     /// Config getters
-    public fun config_paused(config: &VestingConfig): bool { config.paused }
-    public fun config_admin(config: &VestingConfig): address { config.admin }
-    public fun config_total_schedules(config: &VestingConfig): u64 { config.total_schedules }
+    public fun get_config_paused(config: &VestingConfig): bool { config.paused }
+    public fun get_config_admin(config: &VestingConfig): address { config.admin }
+    public fun get_config_total_schedules(config: &VestingConfig): u64 { config.total_schedules }
 
     // ═══════════════════════════════════════════════════════════════════════
     // HELPER FUNCTIONS

@@ -44,6 +44,7 @@ module sui_dao::treasury {
     public fun create_treasury(
         admin_cap: &DAOAdminCap,
         governance: &mut Governance,
+        clock: &sui::clock::Clock,
         ctx: &mut TxContext,
     ): Treasury {
         sui_dao::access::assert_dao_admin_cap_matches(admin_cap, object::id(governance));
@@ -59,7 +60,12 @@ module sui_dao::treasury {
         let treasury_id = object::id(&treasury);
         governance::set_treasury(admin_cap, governance, treasury_id);
 
-        events::emit_treasury_created(treasury_id, object::id(governance));
+        events::emit_treasury_created(
+            treasury_id,
+            object::id(governance),
+            ctx.sender(),
+            clock.timestamp_ms(),
+        );
 
         treasury
     }

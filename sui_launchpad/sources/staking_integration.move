@@ -103,6 +103,7 @@ module sui_launchpad::staking_integration {
     /// This is the main integration function called during graduation PTB
     ///
     /// T = The graduated token type (both stake and reward token for same-token rewards)
+    /// Origin is set to LAUNCHPAD with the pool_id for tracking
     public fun create_staking_pool<T>(
         staking_registry: &mut StakingRegistry,
         staking_admin_cap: &StakingAdminCap,
@@ -112,8 +113,10 @@ module sui_launchpad::staking_integration {
         ctx: &mut TxContext,
     ): PoolAdminCap {
         let staking_config = graduation::pending_staking_config(pending);
+        let launchpad_pool_id = graduation::pending_pool_id(pending);
 
-        factory::create_pool_free<T, T>(
+        // Use create_pool_admin with ORIGIN_LAUNCHPAD for tracking
+        factory::create_pool_admin<T, T>(
             staking_registry,
             staking_admin_cap,
             reward_coins,
@@ -123,6 +126,8 @@ module sui_launchpad::staking_integration {
             graduation::staking_config_early_unstake_fee_bps(staking_config),
             graduation::staking_config_stake_fee_bps(staking_config),
             graduation::staking_config_unstake_fee_bps(staking_config),
+            sui_staking::events::origin_launchpad(),  // Origin: launchpad
+            option::some(launchpad_pool_id),          // Link to launchpad pool
             clock,
             ctx,
         )

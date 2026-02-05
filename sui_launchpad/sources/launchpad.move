@@ -10,6 +10,7 @@ module sui_launchpad::launchpad {
     use sui_launchpad::bonding_curve::{Self, BondingPool};
     use sui_launchpad::registry::{Self, Registry};
     use sui_launchpad::graduation::{Self, GraduationReceipt};
+    use sui_launchpad::operators::{Self, OperatorRegistry};
     // Vesting integration pending - see docs/VESTING.md
     // use sui_vesting::vesting::{Self, VestingSchedule};
 
@@ -18,7 +19,8 @@ module sui_launchpad::launchpad {
     // ═══════════════════════════════════════════════════════════════════════
 
     /// Called once on module publish
-    /// Creates and shares config and registry, transfers AdminCap to deployer
+    /// Creates and shares config, registry, operator registry
+    /// Transfers AdminCap to deployer (who becomes first super admin)
     fun init(ctx: &mut TxContext) {
         let treasury = ctx.sender();
 
@@ -33,6 +35,10 @@ module sui_launchpad::launchpad {
         // Create and share registry
         let registry = registry::create_registry(ctx);
         transfer::public_share_object(registry);
+
+        // Create and share operator registry (deployer is first super admin)
+        let operator_registry = operators::create_registry(ctx);
+        transfer::public_share_object(operator_registry);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -484,6 +490,169 @@ module sui_launchpad::launchpad {
         config: &mut LaunchpadConfig,
     ) {
         config::set_paused(admin, config, false);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // OPERATOR ENTRY POINTS
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // These functions allow registered operators to perform actions directly
+    // from the dashboard without needing AdminCap transfers.
+    //
+    // Dashboard UX: Operator signs tx -> Executes directly
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// [PAUSE_OPERATOR] Pause a pool
+    public entry fun operator_pause_pool<T>(
+        op_registry: &OperatorRegistry,
+        admin: &AdminCap,
+        pool: &mut BondingPool<T>,
+        clock: &Clock,
+        ctx: &TxContext,
+    ) {
+        operators::assert_pause_operator(op_registry, ctx.sender());
+        bonding_curve::set_paused(admin, pool, true, clock);
+    }
+
+    /// [PAUSE_OPERATOR] Unpause a pool
+    public entry fun operator_unpause_pool<T>(
+        op_registry: &OperatorRegistry,
+        admin: &AdminCap,
+        pool: &mut BondingPool<T>,
+        clock: &Clock,
+        ctx: &TxContext,
+    ) {
+        operators::assert_pause_operator(op_registry, ctx.sender());
+        bonding_curve::set_paused(admin, pool, false, clock);
+    }
+
+    /// [PAUSE_OPERATOR] Pause the entire platform
+    public entry fun operator_pause_platform(
+        op_registry: &OperatorRegistry,
+        admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        ctx: &TxContext,
+    ) {
+        operators::assert_pause_operator(op_registry, ctx.sender());
+        config::set_paused(admin, config, true);
+    }
+
+    /// [PAUSE_OPERATOR] Unpause the platform
+    public entry fun operator_unpause_platform(
+        op_registry: &OperatorRegistry,
+        admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        ctx: &TxContext,
+    ) {
+        operators::assert_pause_operator(op_registry, ctx.sender());
+        config::set_paused(admin, config, false);
+    }
+
+    /// [FEE_OPERATOR] Update creation fee
+    public entry fun operator_set_creation_fee(
+        op_registry: &OperatorRegistry,
+        admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        fee: u64,
+        ctx: &TxContext,
+    ) {
+        operators::assert_fee_operator(op_registry, ctx.sender());
+        config::set_creation_fee(admin, config, fee);
+    }
+
+    /// [FEE_OPERATOR] Update trading fee
+    public entry fun operator_set_trading_fee(
+        op_registry: &OperatorRegistry,
+        admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        fee_bps: u64,
+        ctx: &TxContext,
+    ) {
+        operators::assert_fee_operator(op_registry, ctx.sender());
+        config::set_trading_fee(admin, config, fee_bps);
+    }
+
+    /// [FEE_OPERATOR] Update graduation fee
+    public entry fun operator_set_graduation_fee(
+        op_registry: &OperatorRegistry,
+        admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        fee: u64,
+        ctx: &TxContext,
+    ) {
+        operators::assert_fee_operator(op_registry, ctx.sender());
+        config::set_graduation_fee(admin, config, fee);
+    }
+
+    /// [TREASURY_OPERATOR] Update the platform treasury address (where fees go)
+    public entry fun operator_set_treasury(
+        op_registry: &OperatorRegistry,
+        admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        new_treasury: address,
+        ctx: &TxContext,
+    ) {
+        operators::assert_treasury_operator(op_registry, ctx.sender());
+        config::set_treasury(admin, config, new_treasury);
+    }
+
+    /// [TREASURY_OPERATOR] Update the DAO treasury address
+    public entry fun operator_set_dao_treasury(
+        op_registry: &OperatorRegistry,
+        admin: &AdminCap,
+        config: &mut LaunchpadConfig,
+        new_dao_treasury: address,
+        ctx: &TxContext,
+    ) {
+        operators::assert_treasury_operator(op_registry, ctx.sender());
+        config::set_dao_treasury(admin, config, new_dao_treasury);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // OPERATOR MANAGEMENT ENTRY POINTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// [SUPER_ADMIN] Add an operator for a role
+    public entry fun add_operator(
+        op_registry: &mut OperatorRegistry,
+        operator: address,
+        role: u8,
+        ctx: &TxContext,
+    ) {
+        operators::add_operator(op_registry, operator, role, ctx);
+    }
+
+    /// [SUPER_ADMIN] Remove an operator from a role
+    public entry fun remove_operator(
+        op_registry: &mut OperatorRegistry,
+        operator: address,
+        role: u8,
+        ctx: &TxContext,
+    ) {
+        operators::remove_operator(op_registry, operator, role, ctx);
+    }
+
+    /// [SUPER_ADMIN] Add a new super admin
+    public entry fun add_super_admin(
+        op_registry: &mut OperatorRegistry,
+        new_admin: address,
+        ctx: &TxContext,
+    ) {
+        operators::add_super_admin(op_registry, new_admin, ctx);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // OPERATOR VIEWS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Check if address is a super admin
+    public fun is_super_admin(op_registry: &OperatorRegistry, addr: address): bool {
+        operators::is_super_admin(op_registry, addr)
+    }
+
+    /// Check if address has a specific role
+    public fun has_role(op_registry: &OperatorRegistry, addr: address, role: u8): bool {
+        operators::has_role(op_registry, addr, role)
     }
 
     // ═══════════════════════════════════════════════════════════════════════

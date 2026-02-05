@@ -3,6 +3,24 @@ module sui_dao::events {
     use sui::event;
 
     // ═══════════════════════════════════════════════════════════════════════
+    // ORIGIN CONSTANTS - Track how DAO was created
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// DAO created directly by user (independent)
+    const ORIGIN_INDEPENDENT: u8 = 0;
+    /// DAO created via launchpad graduation
+    const ORIGIN_LAUNCHPAD: u8 = 1;
+    /// DAO created via partner platform
+    const ORIGIN_PARTNER: u8 = 2;
+
+    /// Get origin constant for independent creation
+    public fun origin_independent(): u8 { ORIGIN_INDEPENDENT }
+    /// Get origin constant for launchpad creation
+    public fun origin_launchpad(): u8 { ORIGIN_LAUNCHPAD }
+    /// Get origin constant for partner creation
+    public fun origin_partner(): u8 { ORIGIN_PARTNER }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // PLATFORM EVENTS
     // ═══════════════════════════════════════════════════════════════════════
 
@@ -47,6 +65,10 @@ module sui_dao::events {
         voting_period_ms: u64,
         timelock_delay_ms: u64,
         proposal_threshold: u64,
+        // Origin tracking
+        origin: u8,              // 0=independent, 1=launchpad, 2=partner
+        origin_id: Option<ID>,   // Optional: launchpad pool ID or partner ID
+        created_at: u64,         // Timestamp of creation
     }
 
     public struct NFTGovernanceCreated has copy, drop {
@@ -59,6 +81,10 @@ module sui_dao::events {
         voting_period_ms: u64,
         timelock_delay_ms: u64,
         proposal_threshold: u64,
+        // Origin tracking
+        origin: u8,              // 0=independent, 1=launchpad, 2=partner
+        origin_id: Option<ID>,   // Optional: launchpad pool ID or partner ID
+        created_at: u64,         // Timestamp of creation
     }
 
     public struct GovernanceConfigUpdated has copy, drop {
@@ -275,6 +301,8 @@ module sui_dao::events {
     public struct TreasuryCreated has copy, drop {
         treasury_id: ID,
         governance_id: ID,
+        creator: address,        // Who created the treasury
+        created_at: u64,         // Timestamp of creation
     }
 
     public struct TreasuryDeposit has copy, drop {
@@ -395,6 +423,9 @@ module sui_dao::events {
         voting_period_ms: u64,
         timelock_delay_ms: u64,
         proposal_threshold: u64,
+        origin: u8,
+        origin_id: Option<ID>,
+        created_at: u64,
     ) {
         event::emit(GovernanceCreated {
             governance_id,
@@ -407,6 +438,9 @@ module sui_dao::events {
             voting_period_ms,
             timelock_delay_ms,
             proposal_threshold,
+            origin,
+            origin_id,
+            created_at,
         });
     }
 
@@ -420,6 +454,9 @@ module sui_dao::events {
         voting_period_ms: u64,
         timelock_delay_ms: u64,
         proposal_threshold: u64,
+        origin: u8,
+        origin_id: Option<ID>,
+        created_at: u64,
     ) {
         event::emit(NFTGovernanceCreated {
             governance_id,
@@ -431,6 +468,9 @@ module sui_dao::events {
             voting_period_ms,
             timelock_delay_ms,
             proposal_threshold,
+            origin,
+            origin_id,
+            created_at,
         });
     }
 
@@ -818,8 +858,13 @@ module sui_dao::events {
     // EMIT FUNCTIONS - Treasury
     // ═══════════════════════════════════════════════════════════════════════
 
-    public(package) fun emit_treasury_created(treasury_id: ID, governance_id: ID) {
-        event::emit(TreasuryCreated { treasury_id, governance_id });
+    public(package) fun emit_treasury_created(
+        treasury_id: ID,
+        governance_id: ID,
+        creator: address,
+        created_at: u64,
+    ) {
+        event::emit(TreasuryCreated { treasury_id, governance_id, creator, created_at });
     }
 
     public(package) fun emit_treasury_deposit(

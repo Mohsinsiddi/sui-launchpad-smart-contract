@@ -273,7 +273,7 @@ module sui_vesting::strict_vesting_tests {
             );
             transfer::public_transfer(cap3, CREATOR);
 
-            assert!(vesting::config_total_schedules(&config) == 3, 100);
+            assert!(vesting::get_config_total_schedules(&config) == 3, 100);
 
             ts::return_shared(config);
         };

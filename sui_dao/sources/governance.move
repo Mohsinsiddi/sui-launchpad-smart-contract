@@ -156,6 +156,9 @@ module sui_dao::governance {
             config.voting_period_ms,
             config.timelock_delay_ms,
             config.proposal_threshold,
+            events::origin_independent(),
+            option::none(),
+            clock.timestamp_ms(),
         );
 
         (governance, admin_cap)
@@ -163,7 +166,9 @@ module sui_dao::governance {
 
     /// Create staking-based governance with custom parameters (admin only, no fee)
     /// Used by launchpad during graduation for automatic DAO creation
-    public fun create_staking_governance_free(
+    /// origin: 0=independent, 1=launchpad, 2=partner (use events::origin_* constants)
+    /// origin_id: Optional ID linking to source (e.g., launchpad pool ID)
+    public fun create_staking_governance_admin(
         _admin_cap: &access::AdminCap,
         registry: &mut DAORegistry,
         name: String,
@@ -173,6 +178,8 @@ module sui_dao::governance {
         voting_period_ms: u64,
         timelock_delay_ms: u64,
         proposal_threshold_bps: u64,
+        origin: u8,
+        origin_id: Option<ID>,
         clock: &Clock,
         ctx: &mut TxContext,
     ): (Governance, DAOAdminCap) {
@@ -225,6 +232,9 @@ module sui_dao::governance {
             config.voting_period_ms,
             config.timelock_delay_ms,
             config.proposal_threshold,
+            origin,
+            origin_id,
+            clock.timestamp_ms(),
         );
 
         (governance, admin_cap)
@@ -291,6 +301,9 @@ module sui_dao::governance {
             config.voting_period_ms,
             config.timelock_delay_ms,
             config.proposal_threshold,
+            events::origin_independent(),
+            option::none(),
+            clock.timestamp_ms(),
         );
 
         (governance, admin_cap)

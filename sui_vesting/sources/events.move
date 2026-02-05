@@ -4,6 +4,24 @@ module sui_vesting::events {
     use sui::event;
 
     // ═══════════════════════════════════════════════════════════════════════
+    // ORIGIN CONSTANTS - Track how schedule was created
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Schedule created directly by user (independent)
+    const ORIGIN_INDEPENDENT: u8 = 0;
+    /// Schedule created via launchpad graduation (LP vesting)
+    const ORIGIN_LAUNCHPAD: u8 = 1;
+    /// Schedule created via partner platform
+    const ORIGIN_PARTNER: u8 = 2;
+
+    /// Get origin constant for independent creation
+    public fun origin_independent(): u8 { ORIGIN_INDEPENDENT }
+    /// Get origin constant for launchpad creation
+    public fun origin_launchpad(): u8 { ORIGIN_LAUNCHPAD }
+    /// Get origin constant for partner creation
+    public fun origin_partner(): u8 { ORIGIN_PARTNER }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // SCHEDULE EVENTS
     // ═══════════════════════════════════════════════════════════════════════
 
@@ -18,6 +36,9 @@ module sui_vesting::events {
         cliff_duration: u64,
         vesting_duration: u64,
         revocable: bool,
+        // Origin tracking
+        origin: u8,              // 0=independent, 1=launchpad, 2=partner
+        origin_id: Option<ID>,   // Optional: launchpad pool ID or partner ID
     }
 
     /// Emitted when tokens are claimed from a schedule
@@ -83,6 +104,8 @@ module sui_vesting::events {
         cliff_duration: u64,
         vesting_duration: u64,
         revocable: bool,
+        origin: u8,
+        origin_id: Option<ID>,
     ) {
         event::emit(ScheduleCreated {
             schedule_id,
@@ -94,6 +117,8 @@ module sui_vesting::events {
             cliff_duration,
             vesting_duration,
             revocable,
+            origin,
+            origin_id,
         });
     }
 

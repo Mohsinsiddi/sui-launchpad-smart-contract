@@ -377,6 +377,7 @@ module sui_launchpad::e2e_flowx_tests {
             let treasury = dao_integration::create_treasury(
                 &dao_admin_cap,
                 &mut governance,
+                &clock,
                 ts::ctx(scenario),
             );
             treasury_id = object::id(&treasury);
@@ -734,7 +735,7 @@ module sui_launchpad::e2e_flowx_tests {
 
             let reward_tokens = coin::mint_for_testing<TEST_COIN>(1_000_000_000_000, ts::ctx(&mut scenario));
 
-            let pool_admin_cap = staking_factory::create_pool_free<TEST_COIN, TEST_COIN>(
+            let pool_admin_cap = staking_factory::create_pool_admin<TEST_COIN, TEST_COIN>(
                 &mut staking_registry,
                 &staking_admin,
                 reward_tokens,
@@ -744,6 +745,8 @@ module sui_launchpad::e2e_flowx_tests {
                 500,
                 0,
                 0,
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -770,7 +773,7 @@ module sui_launchpad::e2e_flowx_tests {
 
             let reward_tokens = coin::mint_for_testing<TEST_COIN>(1_000_000_000_000, ts::ctx(&mut scenario));
 
-            let pool_admin_cap = staking_factory::create_pool_free<TEST_COIN, TEST_COIN>(
+            let pool_admin_cap = staking_factory::create_pool_admin<TEST_COIN, TEST_COIN>(
                 &mut staking_registry,
                 &staking_admin,
                 reward_tokens,
@@ -780,6 +783,8 @@ module sui_launchpad::e2e_flowx_tests {
                 500,
                 0,
                 0,
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -831,7 +836,7 @@ module sui_launchpad::e2e_flowx_tests {
 
             let staking_pool_id = object::id_from_address(@0x1234);
 
-            let (governance, dao_admin_cap) = sui_dao::governance::create_staking_governance_free(
+            let (governance, dao_admin_cap) = sui_dao::governance::create_staking_governance_admin(
                 &dao_admin,
                 &mut dao_reg,
                 std::string::utf8(b"Test Token DAO"),
@@ -841,6 +846,8 @@ module sui_launchpad::e2e_flowx_tests {
                 MS_PER_DAY * 3,
                 MS_PER_DAY * 2,
                 100,
+                sui_dao::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -868,7 +875,7 @@ module sui_launchpad::e2e_flowx_tests {
 
             let staking_pool_id = object::id_from_address(@0x1234);
 
-            let (mut governance, dao_admin_cap) = sui_dao::governance::create_staking_governance_free(
+            let (mut governance, dao_admin_cap) = sui_dao::governance::create_staking_governance_admin(
                 &dao_admin,
                 &mut dao_reg,
                 std::string::utf8(b"Test DAO"),
@@ -878,6 +885,8 @@ module sui_launchpad::e2e_flowx_tests {
                 MS_PER_DAY * 3,
                 MS_PER_DAY * 2,
                 100,
+                sui_dao::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -885,6 +894,7 @@ module sui_launchpad::e2e_flowx_tests {
             let treasury = sui_dao::treasury::create_treasury(
                 &dao_admin_cap,
                 &mut governance,
+                &clock,
                 ts::ctx(&mut scenario),
             );
 
@@ -998,7 +1008,7 @@ module sui_launchpad::e2e_flowx_tests {
 
             let reward_tokens = coin::mint_for_testing<TEST_COIN>(10_000_000_000_000, ts::ctx(&mut scenario));
 
-            let pool_admin_cap = staking_factory::create_pool_free<TEST_COIN, TEST_COIN>(
+            let pool_admin_cap = staking_factory::create_pool_admin<TEST_COIN, TEST_COIN>(
                 &mut staking_registry,
                 &staking_admin,
                 reward_tokens,
@@ -1008,6 +1018,8 @@ module sui_launchpad::e2e_flowx_tests {
                 500,
                 0,
                 0,
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -1151,7 +1163,7 @@ module sui_launchpad::e2e_flowx_tests {
 
             let reward_tokens = coin::mint_for_testing<TEST_COIN>(10_000_000_000_000, ts::ctx(&mut scenario));
 
-            let pool_admin_cap = staking_factory::create_pool_free<TEST_COIN, TEST_COIN>(
+            let pool_admin_cap = staking_factory::create_pool_admin<TEST_COIN, TEST_COIN>(
                 &mut staking_registry,
                 &staking_admin,
                 reward_tokens,
@@ -1161,6 +1173,8 @@ module sui_launchpad::e2e_flowx_tests {
                 500,
                 0,
                 0,
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -1186,7 +1200,7 @@ module sui_launchpad::e2e_flowx_tests {
             let mut dao_reg = ts::take_shared<DAORegistry>(&scenario);
             let clock = create_clock(&mut scenario);
 
-            let (mut governance, dao_admin_cap) = sui_dao::governance::create_staking_governance_free(
+            let (mut governance, dao_admin_cap) = sui_dao::governance::create_staking_governance_admin(
                 &dao_admin,
                 &mut dao_reg,
                 std::string::utf8(b"FlowX Test DAO"),
@@ -1196,6 +1210,8 @@ module sui_launchpad::e2e_flowx_tests {
                 MS_PER_DAY, // 1 day voting period
                 0,          // no timelock for testing
                 100,        // proposal threshold
+                sui_dao::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -1205,6 +1221,7 @@ module sui_launchpad::e2e_flowx_tests {
             let treasury = sui_dao::treasury::create_treasury(
                 &dao_admin_cap,
                 &mut governance,
+                &clock,
                 ts::ctx(&mut scenario),
             );
             treasury_id = object::id(&treasury);
@@ -1354,7 +1371,7 @@ module sui_launchpad::e2e_flowx_tests {
 
             let reward_tokens = coin::mint_for_testing<TEST_COIN>(10_000_000_000_000, ts::ctx(&mut scenario));
 
-            let pool_admin_cap = staking_factory::create_pool_free<TEST_COIN, TEST_COIN>(
+            let pool_admin_cap = staking_factory::create_pool_admin<TEST_COIN, TEST_COIN>(
                 &mut staking_registry,
                 &staking_admin,
                 reward_tokens,
@@ -1364,6 +1381,8 @@ module sui_launchpad::e2e_flowx_tests {
                 0, // no early unstake fee
                 0,
                 0,
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -1388,7 +1407,7 @@ module sui_launchpad::e2e_flowx_tests {
             let mut dao_reg = ts::take_shared<DAORegistry>(&scenario);
             let clock = create_clock(&mut scenario);
 
-            let (mut governance, dao_admin_cap) = sui_dao::governance::create_staking_governance_free(
+            let (mut governance, dao_admin_cap) = sui_dao::governance::create_staking_governance_admin(
                 &dao_admin,
                 &mut dao_reg,
                 std::string::utf8(b"FlowX Treasury Test DAO"),
@@ -1398,6 +1417,8 @@ module sui_launchpad::e2e_flowx_tests {
                 MS_PER_HOUR, // 1 hour voting
                 0,          // no timelock
                 1,          // low threshold
+                sui_dao::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -1407,6 +1428,7 @@ module sui_launchpad::e2e_flowx_tests {
             let treasury = sui_dao::treasury::create_treasury(
                 &dao_admin_cap,
                 &mut governance,
+                &clock,
                 ts::ctx(&mut scenario),
             );
             treasury_id = object::id(&treasury);
@@ -1601,7 +1623,7 @@ module sui_launchpad::e2e_flowx_tests {
 
             let reward_tokens = coin::mint_for_testing<TEST_COIN>(10_000_000_000_000, ts::ctx(&mut scenario));
 
-            let pool_admin_cap = staking_factory::create_pool_free<TEST_COIN, TEST_COIN>(
+            let pool_admin_cap = staking_factory::create_pool_admin<TEST_COIN, TEST_COIN>(
                 &mut staking_registry,
                 &staking_admin,
                 reward_tokens,
@@ -1611,6 +1633,8 @@ module sui_launchpad::e2e_flowx_tests {
                 0, // no early unstake fee
                 0,
                 0,
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );

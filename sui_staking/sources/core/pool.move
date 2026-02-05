@@ -74,6 +74,8 @@ module sui_staking::pool {
     // ═══════════════════════════════════════════════════════════════════════
 
     /// Create a new staking pool
+    /// origin: 0=independent, 1=launchpad, 2=partner (use events::origin_* constants)
+    /// origin_id: Optional ID linking to source (e.g., launchpad pool ID)
     public fun create<StakeToken, RewardToken>(
         reward_coins: Coin<RewardToken>,
         start_time_ms: u64,
@@ -82,6 +84,8 @@ module sui_staking::pool {
         early_unstake_fee_bps: u64,
         stake_fee_bps: u64,
         unstake_fee_bps: u64,
+        origin: u8,
+        origin_id: Option<ID>,
         clock: &Clock,
         ctx: &mut TxContext,
     ): (StakingPool<StakeToken, RewardToken>, PoolAdminCap) {
@@ -129,7 +133,7 @@ module sui_staking::pool {
         let pool_id = object::uid_to_inner(&pool.id);
         let admin_cap = access::create_pool_admin_cap(pool_id, ctx);
 
-        pool_emit_created(&pool, ctx);
+        emit_pool_created_with_origin(&pool, origin, origin_id, current_time, ctx);
 
         (pool, admin_cap)
     }
@@ -137,11 +141,15 @@ module sui_staking::pool {
     /// Create a governance-only staking pool (no rewards, just voting power)
     /// Users stake tokens to gain voting power in DAO governance
     /// No reward token required - staking is purely for governance participation
+    /// origin: 0=independent, 1=launchpad, 2=partner (use events::origin_* constants)
+    /// origin_id: Optional ID linking to source (e.g., launchpad pool ID)
     public fun create_governance_pool<StakeToken>(
         min_stake_duration_ms: u64,
         early_unstake_fee_bps: u64,
         stake_fee_bps: u64,
         unstake_fee_bps: u64,
+        origin: u8,
+        origin_id: Option<ID>,
         clock: &Clock,
         ctx: &mut TxContext,
     ): (StakingPool<StakeToken, StakeToken>, PoolAdminCap) {
@@ -186,7 +194,7 @@ module sui_staking::pool {
         let pool_id = object::uid_to_inner(&pool.id);
         let admin_cap = access::create_pool_admin_cap(pool_id, ctx);
 
-        pool_emit_governance_created(&pool, ctx);
+        emit_governance_pool_created_with_origin(&pool, origin, origin_id, current_time, ctx);
 
         (pool, admin_cap)
     }
@@ -662,9 +670,12 @@ module sui_staking::pool {
         pool.last_reward_time_ms = effective_time;
     }
 
-    /// Emit pool created event with type info
-    fun pool_emit_created<StakeToken, RewardToken>(
+    /// Emit pool created event with type info and origin tracking
+    public(package) fun emit_pool_created_with_origin<StakeToken, RewardToken>(
         pool: &StakingPool<StakeToken, RewardToken>,
+        origin: u8,
+        origin_id: Option<ID>,
+        created_at: u64,
         ctx: &TxContext,
     ) {
         let stake_type = std::type_name::with_original_ids<StakeToken>();
@@ -682,12 +693,18 @@ module sui_staking::pool {
             pool.config.early_unstake_fee_bps,
             pool.config.stake_fee_bps,
             pool.config.unstake_fee_bps,
+            origin,
+            origin_id,
+            created_at,
         );
     }
 
-    /// Emit governance pool created event
-    fun pool_emit_governance_created<StakeToken, RewardToken>(
+    /// Emit governance pool created event with origin tracking
+    public(package) fun emit_governance_pool_created_with_origin<StakeToken, RewardToken>(
         pool: &StakingPool<StakeToken, RewardToken>,
+        origin: u8,
+        origin_id: Option<ID>,
+        created_at: u64,
         ctx: &TxContext,
     ) {
         let stake_type = std::type_name::with_original_ids<StakeToken>();
@@ -700,6 +717,9 @@ module sui_staking::pool {
             pool.config.early_unstake_fee_bps,
             pool.config.stake_fee_bps,
             pool.config.unstake_fee_bps,
+            origin,
+            origin_id,
+            created_at,
         );
     }
 
@@ -750,15 +770,15 @@ module sui_staking::pool {
     }
 
     // Config getters
-    public fun config_creator(config: &PoolConfig): address { config.creator }
-    public fun config_start_time_ms(config: &PoolConfig): u64 { config.start_time_ms }
-    public fun config_end_time_ms(config: &PoolConfig): u64 { config.end_time_ms }
-    public fun config_total_rewards(config: &PoolConfig): u64 { config.total_rewards }
-    public fun config_min_stake_duration_ms(config: &PoolConfig): u64 { config.min_stake_duration_ms }
-    public fun config_early_unstake_fee_bps(config: &PoolConfig): u64 { config.early_unstake_fee_bps }
-    public fun config_stake_fee_bps(config: &PoolConfig): u64 { config.stake_fee_bps }
-    public fun config_unstake_fee_bps(config: &PoolConfig): u64 { config.unstake_fee_bps }
-    public fun config_governance_only(config: &PoolConfig): bool { config.governance_only }
+    public fun get_config_creator(config: &PoolConfig): address { config.creator }
+    public fun get_config_start_time_ms(config: &PoolConfig): u64 { config.start_time_ms }
+    public fun get_config_end_time_ms(config: &PoolConfig): u64 { config.end_time_ms }
+    public fun get_config_total_rewards(config: &PoolConfig): u64 { config.total_rewards }
+    public fun get_config_min_stake_duration_ms(config: &PoolConfig): u64 { config.min_stake_duration_ms }
+    public fun get_config_early_unstake_fee_bps(config: &PoolConfig): u64 { config.early_unstake_fee_bps }
+    public fun get_config_stake_fee_bps(config: &PoolConfig): u64 { config.stake_fee_bps }
+    public fun get_config_unstake_fee_bps(config: &PoolConfig): u64 { config.unstake_fee_bps }
+    public fun get_config_governance_only(config: &PoolConfig): bool { config.governance_only }
 
     /// Check if pool is governance-only (no rewards)
     public fun is_governance_only<StakeToken, RewardToken>(pool: &StakingPool<StakeToken, RewardToken>): bool {

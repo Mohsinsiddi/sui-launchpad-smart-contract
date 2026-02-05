@@ -3,6 +3,24 @@ module sui_staking::events {
     use sui::event;
 
     // ═══════════════════════════════════════════════════════════════════════
+    // ORIGIN CONSTANTS - Track how pool was created
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Pool created directly by user (independent)
+    const ORIGIN_INDEPENDENT: u8 = 0;
+    /// Pool created via launchpad graduation
+    const ORIGIN_LAUNCHPAD: u8 = 1;
+    /// Pool created via partner platform
+    const ORIGIN_PARTNER: u8 = 2;
+
+    /// Get origin constant for independent creation
+    public fun origin_independent(): u8 { ORIGIN_INDEPENDENT }
+    /// Get origin constant for launchpad creation
+    public fun origin_launchpad(): u8 { ORIGIN_LAUNCHPAD }
+    /// Get origin constant for partner creation
+    public fun origin_partner(): u8 { ORIGIN_PARTNER }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // POOL EVENTS
     // ═══════════════════════════════════════════════════════════════════════
 
@@ -19,6 +37,10 @@ module sui_staking::events {
         early_unstake_fee_bps: u64,
         stake_fee_bps: u64,
         unstake_fee_bps: u64,
+        // Origin tracking
+        origin: u8,              // 0=independent, 1=launchpad, 2=partner
+        origin_id: Option<ID>,   // Optional: launchpad pool ID or partner ID
+        created_at: u64,         // Timestamp of creation
     }
 
     /// Emitted when a governance-only pool is created (no rewards, just voting power)
@@ -30,6 +52,10 @@ module sui_staking::events {
         early_unstake_fee_bps: u64,
         stake_fee_bps: u64,
         unstake_fee_bps: u64,
+        // Origin tracking
+        origin: u8,              // 0=independent, 1=launchpad, 2=partner
+        origin_id: Option<ID>,   // Optional: launchpad pool ID or partner ID
+        created_at: u64,         // Timestamp of creation
     }
 
     /// Emitted when rewards are added to a pool
@@ -131,6 +157,9 @@ module sui_staking::events {
         early_unstake_fee_bps: u64,
         stake_fee_bps: u64,
         unstake_fee_bps: u64,
+        origin: u8,
+        origin_id: Option<ID>,
+        created_at: u64,
     ) {
         event::emit(PoolCreated {
             pool_id,
@@ -144,6 +173,9 @@ module sui_staking::events {
             early_unstake_fee_bps,
             stake_fee_bps,
             unstake_fee_bps,
+            origin,
+            origin_id,
+            created_at,
         });
     }
 
@@ -287,6 +319,9 @@ module sui_staking::events {
         early_unstake_fee_bps: u64,
         stake_fee_bps: u64,
         unstake_fee_bps: u64,
+        origin: u8,
+        origin_id: Option<ID>,
+        created_at: u64,
     ) {
         event::emit(GovernancePoolCreated {
             pool_id,
@@ -296,6 +331,9 @@ module sui_staking::events {
             early_unstake_fee_bps,
             stake_fee_bps,
             unstake_fee_bps,
+            origin,
+            origin_id,
+            created_at,
         });
     }
 }

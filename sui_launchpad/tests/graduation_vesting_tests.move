@@ -856,7 +856,7 @@ module sui_launchpad::graduation_vesting_tests {
             );
             transfer::public_transfer(cap3, ADMIN);
 
-            assert!(vesting::config_total_schedules(&vesting_config) == 3, 2100);
+            assert!(vesting::get_config_total_schedules(&vesting_config) == 3, 2100);
 
             ts::return_shared(vesting_config);
         };

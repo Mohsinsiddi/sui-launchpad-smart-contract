@@ -83,6 +83,8 @@ module sui_staking::staking_tests {
                 500, // 5% early fee
                 0, // 0% stake fee
                 0, // 0% unstake fee
+                sui_staking::events::origin_independent(), // origin
+                option::none(), // origin_id
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -166,6 +168,8 @@ module sui_staking::staking_tests {
                 500,
                 0, // 0% stake fee
                 0, // 0% unstake fee
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -210,6 +214,8 @@ module sui_staking::staking_tests {
                 500,
                 0, // 0% stake fee
                 0, // 0% unstake fee
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -275,6 +281,8 @@ module sui_staking::staking_tests {
                 500, // 5% early fee
                 0, // 0% stake fee
                 0, // 0% unstake fee
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -340,6 +348,8 @@ module sui_staking::staking_tests {
                 500, // 5% early fee
                 0, // 0% stake fee
                 0, // 0% unstake fee
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -407,6 +417,8 @@ module sui_staking::staking_tests {
                 0, // no early fee
                 0, // 0% stake fee
                 0, // 0% unstake fee
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -505,6 +517,8 @@ module sui_staking::staking_tests {
                 500,
                 0, // 0% stake fee
                 0, // 0% unstake fee
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -545,10 +559,10 @@ module sui_staking::staking_tests {
             );
 
             let config = pool::config(&pool);
-            assert!(pool::config_min_stake_duration_ms(config) == MS_PER_DAY * 2, 0);
-            assert!(pool::config_early_unstake_fee_bps(config) == 300, 1);
-            assert!(pool::config_stake_fee_bps(config) == 100, 2);
-            assert!(pool::config_unstake_fee_bps(config) == 200, 3);
+            assert!(pool::get_config_min_stake_duration_ms(config) == MS_PER_DAY * 2, 0);
+            assert!(pool::get_config_early_unstake_fee_bps(config) == 300, 1);
+            assert!(pool::get_config_stake_fee_bps(config) == 100, 2);
+            assert!(pool::get_config_unstake_fee_bps(config) == 200, 3);
 
             ts::return_shared(pool);
             ts::return_to_sender(&scenario, admin_cap);
@@ -592,6 +606,8 @@ module sui_staking::staking_tests {
                 500, // 5% early fee
                 0, // 0% stake fee
                 0, // 0% unstake fee
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -664,6 +680,8 @@ module sui_staking::staking_tests {
                 500,
                 0, // 0% stake fee
                 0, // 0% unstake fee
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -714,6 +732,8 @@ module sui_staking::staking_tests {
                 500,
                 0, // 0% stake fee
                 0, // 0% unstake fee
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -753,6 +773,8 @@ module sui_staking::staking_tests {
                 500,
                 0, // 0% stake fee
                 0, // 0% unstake fee
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -795,6 +817,8 @@ module sui_staking::staking_tests {
                 500,
                 0, // 0% stake fee
                 0, // 0% unstake fee
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -862,6 +886,8 @@ module sui_staking::staking_tests {
                 500,
                 0, // 0% stake fee
                 0, // 0% unstake fee
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -929,6 +955,8 @@ module sui_staking::staking_tests {
                 0, // no early fee
                 200, // 2% stake fee
                 0, // no unstake fee
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -976,6 +1004,8 @@ module sui_staking::staking_tests {
                 0, // no early fee
                 0, // no stake fee
                 300, // 3% unstake fee
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -1039,6 +1069,8 @@ module sui_staking::staking_tests {
                 500, // 5% early fee
                 0, // no stake fee
                 200, // 2% unstake fee
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -1103,6 +1135,8 @@ module sui_staking::staking_tests {
                 0, // no early fee
                 200, // 2% stake fee
                 0, // no unstake fee
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -1174,13 +1208,15 @@ module sui_staking::staking_tests {
                 0,
                 500, // 5% max stake fee
                 500, // 5% max unstake fee
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
 
             let config = pool::config(&pool);
-            assert!(pool::config_stake_fee_bps(config) == 500, 0);
-            assert!(pool::config_unstake_fee_bps(config) == 500, 1);
+            assert!(pool::get_config_stake_fee_bps(config) == 500, 0);
+            assert!(pool::get_config_unstake_fee_bps(config) == 500, 1);
 
             transfer::public_share_object(pool);
             transfer::public_transfer(admin_cap, ADMIN);
@@ -1207,6 +1243,8 @@ module sui_staking::staking_tests {
                 0, // no early fee
                 0, // no stake fee
                 200, // 2% unstake fee
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -1274,6 +1312,8 @@ module sui_staking::staking_tests {
                 500,         // 5% early unstake fee
                 0,           // 0% stake fee
                 0,           // 0% unstake fee
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -1282,7 +1322,7 @@ module sui_staking::staking_tests {
             assert!(pool::is_governance_only(&pool), 0);
             assert!(pool::reward_rate(&pool) == 0, 1);
             assert!(pool::reward_balance(&pool) == 0, 2);
-            assert!(pool::config_governance_only(pool::config(&pool)), 3);
+            assert!(pool::get_config_governance_only(pool::config(&pool)), 3);
 
             transfer::public_share_object(pool);
             transfer::public_transfer(admin_cap, ADMIN);
@@ -1305,6 +1345,8 @@ module sui_staking::staking_tests {
                 500,
                 0,
                 0,
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -1367,6 +1409,8 @@ module sui_staking::staking_tests {
                 0, // No early unstake fee
                 0,
                 0,
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -1409,6 +1453,8 @@ module sui_staking::staking_tests {
                 1000,         // 10% early unstake fee
                 0,
                 0,
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -1461,6 +1507,8 @@ module sui_staking::staking_tests {
         {
             let (pool, admin_cap) = pool::create_governance_pool<STAKE>(
                 0, 0, 0, 0,
+                sui_staking::events::origin_independent(),
+                option::none(),
                 &clock,
                 ts::ctx(&mut scenario),
             );

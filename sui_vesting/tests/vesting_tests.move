@@ -72,7 +72,7 @@ module sui_vesting::vesting_tests {
                 ts::ctx(&mut scenario),
             );
 
-            assert!(vesting::config_total_schedules(&config) == 1, 0);
+            assert!(vesting::get_config_total_schedules(&config) == 1, 0);
 
             ts::return_shared(config);
             transfer::public_transfer(creator_cap, CREATOR);
@@ -965,7 +965,7 @@ module sui_vesting::vesting_tests {
 
             vesting::set_platform_paused(&admin_cap, &mut config, true, &clock, ts::ctx(&mut scenario));
 
-            assert!(vesting::config_paused(&config), 0);
+            assert!(vesting::get_config_paused(&config), 0);
 
             ts::return_shared(config);
             ts::return_to_sender(&scenario, admin_cap);

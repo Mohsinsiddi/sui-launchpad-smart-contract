@@ -99,6 +99,7 @@ module sui_launchpad::dao_integration {
     ///
     /// T = The graduated token type
     /// Requires DAOPlatformAdminCap to bypass creation fee
+    /// Origin is set to LAUNCHPAD with the pool_id for tracking
     public fun create_dao<T>(
         dao_platform_admin: &DAOPlatformAdminCap,
         dao_registry: &mut DAORegistry,
@@ -109,10 +110,12 @@ module sui_launchpad::dao_integration {
         ctx: &mut TxContext,
     ): (Governance, DAOAdminCap) {
         let dao_config = graduation::pending_dao_config(pending);
+        let launchpad_pool_id = graduation::pending_pool_id(pending);
 
         // Create staking-based governance with custom parameters (no fee)
         // Voting power comes from staked tokens in the linked staking pool
-        governance::create_staking_governance_free(
+        // Origin is set to LAUNCHPAD for tracking
+        governance::create_staking_governance_admin(
             dao_platform_admin,
             dao_registry,
             name,
@@ -122,6 +125,8 @@ module sui_launchpad::dao_integration {
             graduation::dao_config_voting_period_ms(dao_config),
             graduation::dao_config_timelock_delay_ms(dao_config),
             graduation::dao_config_proposal_threshold_bps(dao_config),
+            sui_dao::events::origin_launchpad(),  // Origin: launchpad
+            option::some(launchpad_pool_id),      // Link to launchpad pool
             clock,
             ctx,
         )
@@ -132,9 +137,10 @@ module sui_launchpad::dao_integration {
     public fun create_treasury(
         dao_admin_cap: &DAOAdminCap,
         governance: &mut Governance,
+        clock: &Clock,
         ctx: &mut TxContext,
     ): Treasury {
-        treasury::create_treasury(dao_admin_cap, governance, ctx)
+        treasury::create_treasury(dao_admin_cap, governance, clock, ctx)
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -291,7 +297,7 @@ module sui_launchpad::dao_integration {
         );
 
         // Create treasury
-        let treasury = create_treasury(&dao_admin_cap, &mut governance, ctx);
+        let treasury = create_treasury(&dao_admin_cap, &mut governance, clock, ctx);
 
         // Optionally enable council
         let council_cap = if (should_enable_council(pending)) {

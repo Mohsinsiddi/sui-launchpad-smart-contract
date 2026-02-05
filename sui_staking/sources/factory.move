@@ -64,6 +64,10 @@ module sui_staking::factory {
         reward_token_type: std::ascii::String,
         /// Whether this is a governance-only pool
         governance_only: bool,
+        /// Origin: 0=independent, 1=launchpad, 2=partner
+        origin: u8,
+        /// Optional origin ID (launchpad pool ID or partner ID)
+        origin_id: Option<ID>,
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -119,7 +123,7 @@ module sui_staking::factory {
         assert!(fee_amount >= registry.config.setup_fee, sui_staking::errors::insufficient_fee());
         balance::join(&mut registry.collected_fees, coin::into_balance(setup_fee));
 
-        // Create pool
+        // Create pool (independent origin for public creation)
         let (pool, admin_cap) = pool::create<StakeToken, RewardToken>(
             reward_coins,
             start_time_ms,
@@ -128,6 +132,8 @@ module sui_staking::factory {
             early_unstake_fee_bps,
             stake_fee_bps,
             unstake_fee_bps,
+            events::origin_independent(),
+            option::none(),
             clock,
             ctx,
         );
@@ -146,6 +152,8 @@ module sui_staking::factory {
             stake_token_type: std::type_name::into_string(stake_type),
             reward_token_type: std::type_name::into_string(reward_type),
             governance_only: false,
+            origin: events::origin_independent(),
+            origin_id: option::none(),
         };
 
         vector::push_back(&mut registry.pool_ids, pool_id);
@@ -159,7 +167,9 @@ module sui_staking::factory {
     }
 
     /// Create a pool without setup fee (admin only)
-    public fun create_pool_free<StakeToken, RewardToken>(
+    /// origin: 0=independent, 1=launchpad, 2=partner (use events::origin_* constants)
+    /// origin_id: Optional ID linking to source (e.g., launchpad pool ID)
+    public fun create_pool_admin<StakeToken, RewardToken>(
         registry: &mut StakingRegistry,
         _admin_cap: &AdminCap,
         reward_coins: Coin<RewardToken>,
@@ -169,13 +179,15 @@ module sui_staking::factory {
         early_unstake_fee_bps: u64,
         stake_fee_bps: u64,
         unstake_fee_bps: u64,
+        origin: u8,
+        origin_id: Option<ID>,
         clock: &Clock,
         ctx: &mut TxContext,
     ): PoolAdminCap {
         // Check platform not paused
         assert!(!registry.paused, sui_staking::errors::platform_paused());
 
-        // Create pool
+        // Create pool with specified origin
         let (pool, admin_cap) = pool::create<StakeToken, RewardToken>(
             reward_coins,
             start_time_ms,
@@ -184,6 +196,8 @@ module sui_staking::factory {
             early_unstake_fee_bps,
             stake_fee_bps,
             unstake_fee_bps,
+            origin,
+            origin_id,
             clock,
             ctx,
         );
@@ -202,6 +216,8 @@ module sui_staking::factory {
             stake_token_type: std::type_name::into_string(stake_type),
             reward_token_type: std::type_name::into_string(reward_type),
             governance_only: false,
+            origin,
+            origin_id,
         };
 
         vector::push_back(&mut registry.pool_ids, pool_id);
@@ -234,12 +250,14 @@ module sui_staking::factory {
         assert!(fee_amount >= registry.config.setup_fee, sui_staking::errors::insufficient_fee());
         balance::join(&mut registry.collected_fees, coin::into_balance(setup_fee));
 
-        // Create governance pool
+        // Create governance pool (independent origin for public creation)
         let (pool, admin_cap) = pool::create_governance_pool<StakeToken>(
             min_stake_duration_ms,
             early_unstake_fee_bps,
             stake_fee_bps,
             unstake_fee_bps,
+            events::origin_independent(),
+            option::none(),
             clock,
             ctx,
         );
@@ -257,6 +275,8 @@ module sui_staking::factory {
             stake_token_type: std::type_name::into_string(stake_type),
             reward_token_type: std::type_name::into_string(stake_type), // Same as stake for governance
             governance_only: true,
+            origin: events::origin_independent(),
+            origin_id: option::none(),
         };
 
         vector::push_back(&mut registry.pool_ids, pool_id);
@@ -270,25 +290,31 @@ module sui_staking::factory {
     }
 
     /// Create a governance pool without setup fee (admin only)
-    public fun create_governance_pool_free<StakeToken>(
+    /// origin: 0=independent, 1=launchpad, 2=partner (use events::origin_* constants)
+    /// origin_id: Optional ID linking to source (e.g., launchpad pool ID)
+    public fun create_governance_pool_admin<StakeToken>(
         registry: &mut StakingRegistry,
         _admin_cap: &AdminCap,
         min_stake_duration_ms: u64,
         early_unstake_fee_bps: u64,
         stake_fee_bps: u64,
         unstake_fee_bps: u64,
+        origin: u8,
+        origin_id: Option<ID>,
         clock: &Clock,
         ctx: &mut TxContext,
     ): PoolAdminCap {
         // Check platform not paused
         assert!(!registry.paused, sui_staking::errors::platform_paused());
 
-        // Create governance pool
+        // Create governance pool with specified origin
         let (pool, admin_cap) = pool::create_governance_pool<StakeToken>(
             min_stake_duration_ms,
             early_unstake_fee_bps,
             stake_fee_bps,
             unstake_fee_bps,
+            origin,
+            origin_id,
             clock,
             ctx,
         );
@@ -306,6 +332,8 @@ module sui_staking::factory {
             stake_token_type: std::type_name::into_string(stake_type),
             reward_token_type: std::type_name::into_string(stake_type),
             governance_only: true,
+            origin,
+            origin_id,
         };
 
         vector::push_back(&mut registry.pool_ids, pool_id);
@@ -402,16 +430,23 @@ module sui_staking::factory {
     }
 
     // Config getters
-    public fun config_setup_fee(config: &PlatformConfig): u64 { config.setup_fee }
-    public fun config_platform_fee_bps(config: &PlatformConfig): u64 { config.platform_fee_bps }
-    public fun config_fee_recipient(config: &PlatformConfig): address { config.fee_recipient }
+    public fun get_setup_fee(config: &PlatformConfig): u64 { config.setup_fee }
+    public fun get_platform_fee_bps(config: &PlatformConfig): u64 { config.platform_fee_bps }
+    public fun get_fee_recipient(config: &PlatformConfig): address { config.fee_recipient }
 
     // Metadata getters
-    public fun metadata_creator(metadata: &PoolMetadata): address { metadata.creator }
-    public fun metadata_created_at_ms(metadata: &PoolMetadata): u64 { metadata.created_at_ms }
-    public fun metadata_stake_token_type(metadata: &PoolMetadata): std::ascii::String { metadata.stake_token_type }
-    public fun metadata_reward_token_type(metadata: &PoolMetadata): std::ascii::String { metadata.reward_token_type }
-    public fun metadata_governance_only(metadata: &PoolMetadata): bool { metadata.governance_only }
+    public fun get_metadata_creator(metadata: &PoolMetadata): address { metadata.creator }
+    public fun get_metadata_created_at_ms(metadata: &PoolMetadata): u64 { metadata.created_at_ms }
+    public fun get_metadata_stake_token_type(metadata: &PoolMetadata): std::ascii::String { metadata.stake_token_type }
+    public fun get_metadata_reward_token_type(metadata: &PoolMetadata): std::ascii::String { metadata.reward_token_type }
+    public fun get_metadata_governance_only(metadata: &PoolMetadata): bool { metadata.governance_only }
+    public fun get_metadata_origin(metadata: &PoolMetadata): u8 { metadata.origin }
+    public fun get_metadata_origin_id(metadata: &PoolMetadata): Option<ID> { metadata.origin_id }
+
+    /// Check if pool was created by launchpad
+    public fun is_launchpad_pool(metadata: &PoolMetadata): bool {
+        metadata.origin == events::origin_launchpad()
+    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // TEST HELPERS
