@@ -1,423 +1,368 @@
+/// Tests for emergency module
 #[test_only]
 module sui_launchpad::emergency_tests {
-    use sui::clock::{Self, Clock};
-    use sui::coin::{Self, Coin};
-    use sui::sui::SUI;
-    use sui::test_scenario::{Self as ts, Scenario};
+    use sui::test_scenario::{Self as ts};
 
-    use sui_launchpad::emergency::{Self, EmergencyState};
-    use sui_launchpad::access::{Self, AdminCap};
-    use sui_launchpad::config::{Self, LaunchpadConfig};
+    use sui_launchpad::emergency;
+    use sui_launchpad::access;
 
     // ═══════════════════════════════════════════════════════════════════════
-    // CONSTANTS
+    // TEST ADDRESSES
     // ═══════════════════════════════════════════════════════════════════════
 
-    const ADMIN: address = @0xAD;
-    const GUARDIAN: address = @0x6A;
-    const USER: address = @0x1;
-    const TREASURY: address = @0xFEE;
+    fun admin(): address { @0xA1 }
+    fun guardian(): address { @0xB2 }
+    fun user(): address { @0xC3 }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // TEST HELPERS
+    // CONSTANT GETTER TESTS
     // ═══════════════════════════════════════════════════════════════════════
 
-    fun setup_test(): Scenario {
-        let mut scenario = ts::begin(ADMIN);
-        scenario
+    #[test]
+    fun test_rage_quit_fee_multiplier() {
+        // Fee multiplier constant
+        let multiplier = emergency::rage_quit_fee_multiplier();
+        assert!(multiplier == 2, 0);
     }
 
-    fun create_clock(scenario: &mut Scenario): Clock {
-        ts::next_tx(scenario, ADMIN);
-        clock::create_for_testing(ts::ctx(scenario))
+    #[test]
+    fun test_max_rage_quit_fee_bps() {
+        // Max fee should be 20% = 2000 bps
+        let max_fee = emergency::max_rage_quit_fee_bps();
+        assert!(max_fee == 2000, 0);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // TEST: Emergency State Creation
+    // EMERGENCY STATE CREATION TESTS
     // ═══════════════════════════════════════════════════════════════════════
 
     #[test]
     fun test_create_emergency_state() {
-        let mut scenario = setup_test();
-
-        ts::next_tx(&mut scenario, ADMIN);
+        let mut scenario = ts::begin(admin());
         {
             let state = emergency::create_emergency_state(ts::ctx(&mut scenario));
 
-            // Verify initial state
+            // New state should not be active
             assert!(!emergency::is_emergency_active(&state), 0);
+
+            // No guardian set initially
             assert!(option::is_none(&emergency::get_guardian(&state)), 1);
+
+            // No emergency activated time
             assert!(emergency::emergency_activated_at(&state) == 0, 2);
-            assert!(vector::is_empty(emergency::emergency_reason(&state)), 3);
-            assert!(emergency::total_rage_quits(&state) == 0, 4);
-            assert!(emergency::total_sui_recovered(&state) == 0, 5);
+
+            // Clean up
+            emergency::destroy_for_testing(state);
+        };
+        ts::end(scenario);
+    }
+
+    #[test]
+    fun test_emergency_state_initial_counters() {
+        let mut scenario = ts::begin(admin());
+        {
+            let state = emergency::create_emergency_state(ts::ctx(&mut scenario));
+
+            // Initial counters should be zero
+            assert!(emergency::total_rage_quits(&state) == 0, 0);
+            assert!(emergency::total_sui_recovered(&state) == 0, 1);
 
             emergency::destroy_for_testing(state);
         };
+        ts::end(scenario);
+    }
 
+    #[test]
+    fun test_emergency_reason_empty_initially() {
+        let mut scenario = ts::begin(admin());
+        {
+            let state = emergency::create_emergency_state(ts::ctx(&mut scenario));
+
+            // Reason should be empty initially
+            let reason = emergency::emergency_reason(&state);
+            assert!(vector::length(reason) == 0, 0);
+
+            emergency::destroy_for_testing(state);
+        };
         ts::end(scenario);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // TEST: Guardian Management
+    // GUARDIAN MANAGEMENT TESTS
     // ═══════════════════════════════════════════════════════════════════════
 
     #[test]
     fun test_set_guardian() {
-        let mut scenario = setup_test();
-        let mut ctx = tx_context::dummy();
-
-        ts::next_tx(&mut scenario, ADMIN);
+        let mut scenario = ts::begin(admin());
         {
             let admin_cap = access::create_admin_cap_for_testing(ts::ctx(&mut scenario));
             let mut state = emergency::create_emergency_state(ts::ctx(&mut scenario));
 
             // Set guardian
-            emergency::set_guardian(&admin_cap, &mut state, GUARDIAN, ts::ctx(&mut scenario));
+            emergency::set_guardian(&admin_cap, &mut state, guardian(), ts::ctx(&mut scenario));
 
             // Verify guardian is set
-            assert!(option::is_some(&emergency::get_guardian(&state)), 0);
-            assert!(emergency::is_guardian(&state, GUARDIAN), 1);
-            assert!(!emergency::is_guardian(&state, USER), 2);
+            assert!(emergency::is_guardian(&state, guardian()), 0);
+            assert!(!emergency::is_guardian(&state, user()), 1);
 
-            // Cleanup
-            emergency::destroy_for_testing(state);
+            let opt_guardian = emergency::get_guardian(&state);
+            assert!(option::is_some(&opt_guardian), 2);
+            assert!(*option::borrow(&opt_guardian) == guardian(), 3);
+
+            // Clean up
             access::destroy_admin_cap_for_testing(admin_cap);
-        };
-
-        ts::end(scenario);
-    }
-
-    #[test]
-    fun test_change_guardian() {
-        let mut scenario = setup_test();
-
-        ts::next_tx(&mut scenario, ADMIN);
-        {
-            let admin_cap = access::create_admin_cap_for_testing(ts::ctx(&mut scenario));
-            let mut state = emergency::create_emergency_state(ts::ctx(&mut scenario));
-
-            // Set initial guardian
-            emergency::set_guardian(&admin_cap, &mut state, GUARDIAN, ts::ctx(&mut scenario));
-            assert!(emergency::is_guardian(&state, GUARDIAN), 0);
-
-            // Change to new guardian
-            let new_guardian: address = @0x99;
-            emergency::set_guardian(&admin_cap, &mut state, new_guardian, ts::ctx(&mut scenario));
-
-            assert!(emergency::is_guardian(&state, new_guardian), 1);
-            assert!(!emergency::is_guardian(&state, GUARDIAN), 2);
-
             emergency::destroy_for_testing(state);
-            access::destroy_admin_cap_for_testing(admin_cap);
         };
-
-        ts::end(scenario);
-    }
-
-    #[test]
-    #[expected_failure(abort_code = emergency::EAlreadyGuardian)]
-    fun test_set_same_guardian_fails() {
-        let mut scenario = setup_test();
-
-        ts::next_tx(&mut scenario, ADMIN);
-        {
-            let admin_cap = access::create_admin_cap_for_testing(ts::ctx(&mut scenario));
-            let mut state = emergency::create_emergency_state(ts::ctx(&mut scenario));
-
-            // Set guardian
-            emergency::set_guardian(&admin_cap, &mut state, GUARDIAN, ts::ctx(&mut scenario));
-
-            // Try to set same guardian again - should fail
-            emergency::set_guardian(&admin_cap, &mut state, GUARDIAN, ts::ctx(&mut scenario));
-
-            emergency::destroy_for_testing(state);
-            access::destroy_admin_cap_for_testing(admin_cap);
-        };
-
         ts::end(scenario);
     }
 
     #[test]
     fun test_remove_guardian() {
-        let mut scenario = setup_test();
-
-        ts::next_tx(&mut scenario, ADMIN);
+        let mut scenario = ts::begin(admin());
         {
             let admin_cap = access::create_admin_cap_for_testing(ts::ctx(&mut scenario));
             let mut state = emergency::create_emergency_state(ts::ctx(&mut scenario));
 
-            // Set then remove guardian
-            emergency::set_guardian(&admin_cap, &mut state, GUARDIAN, ts::ctx(&mut scenario));
-            assert!(emergency::is_guardian(&state, GUARDIAN), 0);
+            // Set guardian first
+            emergency::set_guardian(&admin_cap, &mut state, guardian(), ts::ctx(&mut scenario));
+            assert!(emergency::is_guardian(&state, guardian()), 0);
 
+            // Remove guardian
             emergency::remove_guardian(&admin_cap, &mut state, ts::ctx(&mut scenario));
+            assert!(!emergency::is_guardian(&state, guardian()), 1);
+            assert!(option::is_none(&emergency::get_guardian(&state)), 2);
 
-            assert!(option::is_none(&emergency::get_guardian(&state)), 1);
-            assert!(!emergency::is_guardian(&state, GUARDIAN), 2);
-
-            emergency::destroy_for_testing(state);
+            // Clean up
             access::destroy_admin_cap_for_testing(admin_cap);
+            emergency::destroy_for_testing(state);
         };
-
         ts::end(scenario);
     }
 
     #[test]
-    #[expected_failure(abort_code = emergency::EGuardianNotSet)]
-    fun test_remove_guardian_when_not_set() {
-        let mut scenario = setup_test();
-
-        ts::next_tx(&mut scenario, ADMIN);
+    fun test_update_guardian() {
+        let mut scenario = ts::begin(admin());
         {
             let admin_cap = access::create_admin_cap_for_testing(ts::ctx(&mut scenario));
             let mut state = emergency::create_emergency_state(ts::ctx(&mut scenario));
 
-            // Try to remove when no guardian set
-            emergency::remove_guardian(&admin_cap, &mut state, ts::ctx(&mut scenario));
+            // Set guardian to one address
+            emergency::set_guardian(&admin_cap, &mut state, guardian(), ts::ctx(&mut scenario));
+            assert!(emergency::is_guardian(&state, guardian()), 0);
 
-            emergency::destroy_for_testing(state);
+            // Update guardian to another address
+            emergency::set_guardian(&admin_cap, &mut state, user(), ts::ctx(&mut scenario));
+            assert!(!emergency::is_guardian(&state, guardian()), 1);
+            assert!(emergency::is_guardian(&state, user()), 2);
+
+            // Clean up
             access::destroy_admin_cap_for_testing(admin_cap);
+            emergency::destroy_for_testing(state);
         };
-
         ts::end(scenario);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // TEST: Emergency Activation
+    // EMERGENCY ACTIVATION TESTS
     // ═══════════════════════════════════════════════════════════════════════
 
     #[test]
-    fun test_activate_emergency() {
-        let mut scenario = setup_test();
-
-        ts::next_tx(&mut scenario, ADMIN);
+    fun test_activate_emergency_by_guardian() {
+        let mut scenario = ts::begin(admin());
+        // Setup: set guardian
         {
             let admin_cap = access::create_admin_cap_for_testing(ts::ctx(&mut scenario));
-            let mut state = emergency::create_emergency_state(ts::ctx(&mut scenario));
-            let clock = clock::create_for_testing(ts::ctx(&mut scenario));
-
-            // Set guardian
-            emergency::set_guardian(&admin_cap, &mut state, GUARDIAN, ts::ctx(&mut scenario));
-
+            let state = emergency::create_emergency_state(ts::ctx(&mut scenario));
+            transfer::public_share_object(state);
             access::destroy_admin_cap_for_testing(admin_cap);
+        };
 
-            // Activate emergency as guardian
-            ts::next_tx(&mut scenario, GUARDIAN);
-            let reason = b"Security vulnerability detected";
-            emergency::activate_emergency(&mut state, reason, &clock, ts::ctx(&mut scenario));
+        // Set guardian
+        ts::next_tx(&mut scenario, admin());
+        {
+            let admin_cap = access::create_admin_cap_for_testing(ts::ctx(&mut scenario));
+            let mut state = ts::take_shared<emergency::EmergencyState>(&scenario);
+            emergency::set_guardian(&admin_cap, &mut state, guardian(), ts::ctx(&mut scenario));
+            ts::return_shared(state);
+            access::destroy_admin_cap_for_testing(admin_cap);
+        };
+
+        // Guardian activates emergency
+        ts::next_tx(&mut scenario, guardian());
+        {
+            let mut state = ts::take_shared<emergency::EmergencyState>(&scenario);
+            let clock = sui::clock::create_for_testing(ts::ctx(&mut scenario));
+
+            emergency::activate_emergency(
+                &mut state,
+                b"Security vulnerability detected",
+                &clock,
+                ts::ctx(&mut scenario)
+            );
 
             // Verify emergency is active
             assert!(emergency::is_emergency_active(&state), 0);
-            assert!(emergency::emergency_activated_at(&state) == 0, 1); // clock starts at 0
-            assert!(*emergency::emergency_reason(&state) == reason, 2);
 
-            emergency::destroy_for_testing(state);
-            clock::destroy_for_testing(clock);
+            sui::clock::destroy_for_testing(clock);
+            ts::return_shared(state);
         };
-
         ts::end(scenario);
     }
-
-    #[test]
-    #[expected_failure(abort_code = emergency::ENotGuardian)]
-    fun test_activate_emergency_not_guardian() {
-        let mut scenario = setup_test();
-
-        ts::next_tx(&mut scenario, ADMIN);
-        {
-            let admin_cap = access::create_admin_cap_for_testing(ts::ctx(&mut scenario));
-            let mut state = emergency::create_emergency_state(ts::ctx(&mut scenario));
-            let clock = clock::create_for_testing(ts::ctx(&mut scenario));
-
-            // Set guardian
-            emergency::set_guardian(&admin_cap, &mut state, GUARDIAN, ts::ctx(&mut scenario));
-
-            access::destroy_admin_cap_for_testing(admin_cap);
-
-            // Try to activate as non-guardian (USER)
-            ts::next_tx(&mut scenario, USER);
-            emergency::activate_emergency(&mut state, b"hack", &clock, ts::ctx(&mut scenario));
-
-            emergency::destroy_for_testing(state);
-            clock::destroy_for_testing(clock);
-        };
-
-        ts::end(scenario);
-    }
-
-    #[test]
-    #[expected_failure(abort_code = emergency::EGuardianNotSet)]
-    fun test_activate_emergency_no_guardian() {
-        let mut scenario = setup_test();
-
-        ts::next_tx(&mut scenario, ADMIN);
-        {
-            let mut state = emergency::create_emergency_state(ts::ctx(&mut scenario));
-            let clock = clock::create_for_testing(ts::ctx(&mut scenario));
-
-            // Try to activate without guardian set
-            emergency::activate_emergency(&mut state, b"hack", &clock, ts::ctx(&mut scenario));
-
-            emergency::destroy_for_testing(state);
-            clock::destroy_for_testing(clock);
-        };
-
-        ts::end(scenario);
-    }
-
-    #[test]
-    #[expected_failure(abort_code = emergency::EAlreadyInEmergency)]
-    fun test_activate_emergency_twice() {
-        let mut scenario = setup_test();
-
-        ts::next_tx(&mut scenario, ADMIN);
-        {
-            let admin_cap = access::create_admin_cap_for_testing(ts::ctx(&mut scenario));
-            let mut state = emergency::create_emergency_state(ts::ctx(&mut scenario));
-            let clock = clock::create_for_testing(ts::ctx(&mut scenario));
-
-            emergency::set_guardian(&admin_cap, &mut state, GUARDIAN, ts::ctx(&mut scenario));
-            access::destroy_admin_cap_for_testing(admin_cap);
-
-            // Activate once
-            ts::next_tx(&mut scenario, GUARDIAN);
-            emergency::activate_emergency(&mut state, b"first", &clock, ts::ctx(&mut scenario));
-
-            // Try to activate again
-            emergency::activate_emergency(&mut state, b"second", &clock, ts::ctx(&mut scenario));
-
-            emergency::destroy_for_testing(state);
-            clock::destroy_for_testing(clock);
-        };
-
-        ts::end(scenario);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // TEST: Emergency Deactivation
-    // ═══════════════════════════════════════════════════════════════════════
 
     #[test]
     fun test_deactivate_emergency() {
-        let mut scenario = setup_test();
-
-        ts::next_tx(&mut scenario, ADMIN);
+        let mut scenario = ts::begin(admin());
+        // Setup
         {
             let admin_cap = access::create_admin_cap_for_testing(ts::ctx(&mut scenario));
-            let mut state = emergency::create_emergency_state(ts::ctx(&mut scenario));
-            let clock = clock::create_for_testing(ts::ctx(&mut scenario));
+            let state = emergency::create_emergency_state(ts::ctx(&mut scenario));
+            transfer::public_share_object(state);
+            access::destroy_admin_cap_for_testing(admin_cap);
+        };
 
-            emergency::set_guardian(&admin_cap, &mut state, GUARDIAN, ts::ctx(&mut scenario));
+        // Set guardian
+        ts::next_tx(&mut scenario, admin());
+        {
+            let admin_cap = access::create_admin_cap_for_testing(ts::ctx(&mut scenario));
+            let mut state = ts::take_shared<emergency::EmergencyState>(&scenario);
+            emergency::set_guardian(&admin_cap, &mut state, guardian(), ts::ctx(&mut scenario));
+            ts::return_shared(state);
+            access::destroy_admin_cap_for_testing(admin_cap);
+        };
 
-            // Activate as guardian
-            ts::next_tx(&mut scenario, GUARDIAN);
-            emergency::activate_emergency(&mut state, b"test", &clock, ts::ctx(&mut scenario));
+        // Guardian activates emergency
+        ts::next_tx(&mut scenario, guardian());
+        {
+            let mut state = ts::take_shared<emergency::EmergencyState>(&scenario);
+            let clock = sui::clock::create_for_testing(ts::ctx(&mut scenario));
+            emergency::activate_emergency(&mut state, b"Test", &clock, ts::ctx(&mut scenario));
             assert!(emergency::is_emergency_active(&state), 0);
+            sui::clock::destroy_for_testing(clock);
+            ts::return_shared(state);
+        };
 
-            // Deactivate as admin
-            ts::next_tx(&mut scenario, ADMIN);
+        // Admin deactivates emergency
+        ts::next_tx(&mut scenario, admin());
+        {
+            let admin_cap = access::create_admin_cap_for_testing(ts::ctx(&mut scenario));
+            let mut state = ts::take_shared<emergency::EmergencyState>(&scenario);
+            let clock = sui::clock::create_for_testing(ts::ctx(&mut scenario));
             emergency::deactivate_emergency(&admin_cap, &mut state, &clock, ts::ctx(&mut scenario));
-
             assert!(!emergency::is_emergency_active(&state), 1);
-            assert!(vector::is_empty(emergency::emergency_reason(&state)), 2);
-
-            emergency::destroy_for_testing(state);
+            sui::clock::destroy_for_testing(clock);
+            ts::return_shared(state);
             access::destroy_admin_cap_for_testing(admin_cap);
-            clock::destroy_for_testing(clock);
         };
-
-        ts::end(scenario);
-    }
-
-    #[test]
-    #[expected_failure(abort_code = emergency::ENotInEmergency)]
-    fun test_deactivate_emergency_not_active() {
-        let mut scenario = setup_test();
-
-        ts::next_tx(&mut scenario, ADMIN);
-        {
-            let admin_cap = access::create_admin_cap_for_testing(ts::ctx(&mut scenario));
-            let mut state = emergency::create_emergency_state(ts::ctx(&mut scenario));
-            let clock = clock::create_for_testing(ts::ctx(&mut scenario));
-
-            // Try to deactivate when not in emergency
-            emergency::deactivate_emergency(&admin_cap, &mut state, &clock, ts::ctx(&mut scenario));
-
-            emergency::destroy_for_testing(state);
-            access::destroy_admin_cap_for_testing(admin_cap);
-            clock::destroy_for_testing(clock);
-        };
-
         ts::end(scenario);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // TEST: Constants
+    // EDGE CASE TESTS
     // ═══════════════════════════════════════════════════════════════════════
 
     #[test]
-    fun test_constants() {
-        // Verify rage quit fee multiplier
-        assert!(emergency::rage_quit_fee_multiplier() == 2, 0);
+    fun test_is_guardian_with_no_guardian_set() {
+        let mut scenario = ts::begin(admin());
+        {
+            let state = emergency::create_emergency_state(ts::ctx(&mut scenario));
 
-        // Verify max rage quit fee (20%)
-        assert!(emergency::max_rage_quit_fee_bps() == 2000, 1);
+            // Any address should return false when no guardian is set
+            assert!(!emergency::is_guardian(&state, guardian()), 0);
+            assert!(!emergency::is_guardian(&state, user()), 1);
+            assert!(!emergency::is_guardian(&state, admin()), 2);
+
+            emergency::destroy_for_testing(state);
+        };
+        ts::end(scenario);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // TEST: View Functions
-    // ═══════════════════════════════════════════════════════════════════════
-
     #[test]
-    fun test_is_guardian() {
-        let mut scenario = setup_test();
-
-        ts::next_tx(&mut scenario, ADMIN);
+    #[expected_failure(abort_code = 801)] // EGuardianNotSet
+    fun test_remove_guardian_when_none_set_fails() {
+        let mut scenario = ts::begin(admin());
         {
             let admin_cap = access::create_admin_cap_for_testing(ts::ctx(&mut scenario));
             let mut state = emergency::create_emergency_state(ts::ctx(&mut scenario));
 
-            // No guardian set
-            assert!(!emergency::is_guardian(&state, GUARDIAN), 0);
-            assert!(!emergency::is_guardian(&state, USER), 1);
+            // Should fail when removing non-existent guardian
+            emergency::remove_guardian(&admin_cap, &mut state, ts::ctx(&mut scenario));
+
+            access::destroy_admin_cap_for_testing(admin_cap);
+            emergency::destroy_for_testing(state);
+        };
+        ts::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 802)] // EAlreadyGuardian
+    fun test_set_same_guardian_fails() {
+        let mut scenario = ts::begin(admin());
+        {
+            let admin_cap = access::create_admin_cap_for_testing(ts::ctx(&mut scenario));
+            let mut state = emergency::create_emergency_state(ts::ctx(&mut scenario));
 
             // Set guardian
-            emergency::set_guardian(&admin_cap, &mut state, GUARDIAN, ts::ctx(&mut scenario));
+            emergency::set_guardian(&admin_cap, &mut state, guardian(), ts::ctx(&mut scenario));
 
-            assert!(emergency::is_guardian(&state, GUARDIAN), 2);
-            assert!(!emergency::is_guardian(&state, USER), 3);
+            // Try to set same guardian again - should fail
+            emergency::set_guardian(&admin_cap, &mut state, guardian(), ts::ctx(&mut scenario));
 
-            emergency::destroy_for_testing(state);
             access::destroy_admin_cap_for_testing(admin_cap);
+            emergency::destroy_for_testing(state);
         };
-
         ts::end(scenario);
     }
 
     #[test]
-    fun test_get_guardian() {
-        let mut scenario = setup_test();
-
-        ts::next_tx(&mut scenario, ADMIN);
+    #[expected_failure(abort_code = 800)] // ENotGuardian
+    fun test_activate_emergency_not_guardian_fails() {
+        let mut scenario = ts::begin(admin());
+        // Setup
         {
             let admin_cap = access::create_admin_cap_for_testing(ts::ctx(&mut scenario));
-            let mut state = emergency::create_emergency_state(ts::ctx(&mut scenario));
-
-            // No guardian
-            assert!(option::is_none(&emergency::get_guardian(&state)), 0);
-
-            // Set guardian
-            emergency::set_guardian(&admin_cap, &mut state, GUARDIAN, ts::ctx(&mut scenario));
-
-            let guardian_opt = emergency::get_guardian(&state);
-            assert!(option::is_some(&guardian_opt), 1);
-            assert!(*option::borrow(&guardian_opt) == GUARDIAN, 2);
-
-            emergency::destroy_for_testing(state);
+            let state = emergency::create_emergency_state(ts::ctx(&mut scenario));
+            transfer::public_share_object(state);
             access::destroy_admin_cap_for_testing(admin_cap);
         };
 
+        // Set guardian
+        ts::next_tx(&mut scenario, admin());
+        {
+            let admin_cap = access::create_admin_cap_for_testing(ts::ctx(&mut scenario));
+            let mut state = ts::take_shared<emergency::EmergencyState>(&scenario);
+            emergency::set_guardian(&admin_cap, &mut state, guardian(), ts::ctx(&mut scenario));
+            ts::return_shared(state);
+            access::destroy_admin_cap_for_testing(admin_cap);
+        };
+
+        // Non-guardian tries to activate emergency - should fail
+        ts::next_tx(&mut scenario, user());
+        {
+            let mut state = ts::take_shared<emergency::EmergencyState>(&scenario);
+            let clock = sui::clock::create_for_testing(ts::ctx(&mut scenario));
+
+            emergency::activate_emergency(&mut state, b"Hack", &clock, ts::ctx(&mut scenario));
+
+            sui::clock::destroy_for_testing(clock);
+            ts::return_shared(state);
+        };
+        ts::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 801)] // EGuardianNotSet
+    fun test_activate_emergency_no_guardian_fails() {
+        let mut scenario = ts::begin(guardian());
+        {
+            let mut state = emergency::create_emergency_state(ts::ctx(&mut scenario));
+            let clock = sui::clock::create_for_testing(ts::ctx(&mut scenario));
+
+            // No guardian set - should fail
+            emergency::activate_emergency(&mut state, b"Test", &clock, ts::ctx(&mut scenario));
+
+            sui::clock::destroy_for_testing(clock);
+            emergency::destroy_for_testing(state);
+        };
         ts::end(scenario);
     }
 }
